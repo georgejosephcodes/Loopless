@@ -5,29 +5,31 @@ const { exec } = require('child_process');
 
 const app = express();
 
+
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
-  'https://loopless.netlify.app' 
+  'https://loopless.netlify.app',
 ];
+
 
 app.use(
   cors({
     origin: function (origin, callback) {
-      if (!origin) return callback(null, true);
+      if (!origin) return callback(null, true); // allow curl / server calls
       if (allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
         callback(new Error('CORS not allowed'));
       }
     },
-    methods: ['GET', 'POST', 'OPTIONS'],
+    methods: ['GET', 'POST'],
     allowedHeaders: ['Content-Type'],
   })
 );
 
-app.options('*', cors());
 app.use(express.json());
+
 
 async function getRealDistanceMatrix(locations) {
   const coords = locations.map(loc => `${loc.lng},${loc.lat}`).join(';');
@@ -40,6 +42,7 @@ async function getRealDistanceMatrix(locations) {
     return null;
   }
 }
+
 
 app.post('/api/optimize', async (req, res) => {
   const { locations } = req.body;
@@ -74,4 +77,7 @@ app.post('/api/optimize', async (req, res) => {
   child.stdin.end();
 });
 
-app.listen(5000, () => console.log('Backend running on port 5000'));
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+  console.log(`Backend running on port ${PORT}`);
+});
