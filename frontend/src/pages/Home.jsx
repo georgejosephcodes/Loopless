@@ -4,6 +4,8 @@ import axios from 'axios';
 import SearchBar from '../components/SearchBar';
 import BucketList from '../components/BucketList';
 import Map from '../components/Map';
+
+// Debug once (safe to keep)
 console.log('API URL =', import.meta.env.VITE_API_URL);
 
 const Home = () => {
@@ -27,10 +29,18 @@ const Home = () => {
     if (bucketList.length < 2 || loading) return;
 
     setLoading(true);
+
     try {
+      // ✅ SANITIZE PAYLOAD (CRITICAL FIX)
+      const cleanLocations = bucketList.map(loc => ({
+        lat: Number(loc.lat),
+        lng: Number(loc.lng),
+        name: loc.name || loc.display_name || 'Unknown',
+      }));
+
       const res = await axios.post(
         `${import.meta.env.VITE_API_URL}/api/optimize`,
-        { locations: bucketList }
+        { locations: cleanLocations }
       );
 
       navigate('/result', {
@@ -42,7 +52,13 @@ const Home = () => {
       });
     } catch (err) {
       console.error(err.response?.data || err.message);
-      alert('Backend error!');
+
+      // ✅ SHOW REAL BACKEND ERROR
+      alert(
+        err.response?.data?.error ||
+        err.message ||
+        'Backend error'
+      );
     } finally {
       setLoading(false);
     }
@@ -57,6 +73,7 @@ const Home = () => {
         backgroundColor: '#f8fafc',
       }}
     >
+      {/* LEFT PANEL */}
       <div
         style={{
           flex: 1,
@@ -66,6 +83,7 @@ const Home = () => {
           gap: '20px',
         }}
       >
+        {/* HEADER */}
         <div
           style={{
             display: 'flex',
@@ -113,11 +131,13 @@ const Home = () => {
                 fontWeight: 'bold',
               }}
             >
+              Optimizing route…
             </div>
           )}
         </div>
       </div>
 
+      {/* RIGHT PANEL */}
       <div
         style={{
           width: '380px',
@@ -128,19 +148,9 @@ const Home = () => {
           padding: '20px',
         }}
       >
-        <p
-          style={{
-            color: '#3b82f6',
-            fontWeight: 'bold',
-            fontSize: '13px',
-            margin: '0 0 10px 0',
-          }}
-        >
-        </p>
-
         <BucketList
           list={bucketList}
-          loading={loading} 
+          loading={loading}
           onRemove={(id) =>
             setBucketList(prev => prev.filter(l => l.id !== id))
           }
