@@ -5,13 +5,14 @@ import SearchBar from '../components/SearchBar';
 import BucketList from '../components/BucketList';
 import Map from '../components/Map';
 
-// Debug once (safe to keep)
+
 console.log('API URL =', import.meta.env.VITE_API_URL);
 
 const Home = () => {
   const [bucketList, setBucketList] = useState([]);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+
 
   const handleAddLocation = (place) => {
     if (bucketList.length >= 15) return;
@@ -25,13 +26,14 @@ const Home = () => {
     ]);
   };
 
+
   const handleOptimize = async () => {
     if (bucketList.length < 2 || loading) return;
 
     setLoading(true);
 
     try {
-      // ✅ SANITIZE PAYLOAD (CRITICAL FIX)
+
       const cleanLocations = bucketList.map(loc => ({
         lat: Number(loc.lat),
         lng: Number(loc.lng),
@@ -52,13 +54,7 @@ const Home = () => {
       });
     } catch (err) {
       console.error(err.response?.data || err.message);
-
-      // ✅ SHOW REAL BACKEND ERROR
-      alert(
-        err.response?.data?.error ||
-        err.message ||
-        'Backend error'
-      );
+      alert(err.response?.data?.error || 'Backend error');
     } finally {
       setLoading(false);
     }
@@ -73,7 +69,7 @@ const Home = () => {
         backgroundColor: '#f8fafc',
       }}
     >
-      {/* LEFT PANEL */}
+
       <div
         style={{
           flex: 1,
@@ -83,7 +79,7 @@ const Home = () => {
           gap: '20px',
         }}
       >
-        {/* HEADER */}
+
         <div
           style={{
             display: 'flex',
@@ -107,7 +103,6 @@ const Home = () => {
           </div>
         </div>
 
-        {/* MAP */}
         <div
           style={{
             flex: 1,
@@ -137,7 +132,6 @@ const Home = () => {
         </div>
       </div>
 
-      {/* RIGHT PANEL */}
       <div
         style={{
           width: '380px',
@@ -148,6 +142,17 @@ const Home = () => {
           padding: '20px',
         }}
       >
+        <p
+          style={{
+            color: '#3b82f6',
+            fontWeight: 'bold',
+            fontSize: '13px',
+            margin: '0 0 10px 0',
+          }}
+        >
+          First item is the Start Point
+        </p>
+
         <BucketList
           list={bucketList}
           loading={loading}
