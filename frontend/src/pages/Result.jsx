@@ -12,42 +12,52 @@ const Result = () => {
     }
   }, [state, navigate]);
 
-  const { locations, distance, matrix } = useMemo(() => {
+  const { locations, totalDistanceKm, matrix } = useMemo(() => {
     return {
       locations: Array.isArray(state?.locations) ? state.locations : [],
-      distance: state?.distance ?? '0',
+      totalDistanceKm: Number(state?.distance ?? 0),
       matrix: Array.isArray(state?.matrix) ? state.matrix : [],
     };
   }, [state]);
 
+  /**
+   * Build accumulated distances WITHOUT double-counting return-to-start
+   */
   const pathWithDistances = useMemo(() => {
     if (locations.length === 0) return [];
 
-    const closedPath = [...locations, locations[0]];
+    let running = 0;
 
-    return closedPath.reduce((acc, loc, i) => {
-      const prevRunning = acc.length > 0 ? acc[acc.length - 1].running : 0;
-      let running = prevRunning;
-
+    const list = locations.map((loc, i) => {
       if (
         i > 0 &&
-        Number.isInteger(closedPath[i - 1]?.originalIdx) &&
-        Number.isInteger(loc?.originalIdx) &&
-        matrix[closedPath[i - 1].originalIdx]?.[loc.originalIdx] != null
+        Number.isInteger(locations[i - 1]?.originalIdx) &&
+        Number.isInteger(loc?.originalIdx)
       ) {
-        running += matrix[closedPath[i - 1].originalIdx][loc.originalIdx];
+        const d =
+          matrix[locations[i - 1].originalIdx]?.[loc.originalIdx] ?? 0;
+        running += d;
       }
 
-      acc.push({
+      return {
         ...loc,
-        running,
         accumulated: (running / 1000).toFixed(2),
-        isReturn: i === closedPath.length - 1,
-      });
+        isStart: i === 0,
+        isReturn: false,
+      };
+    });
 
-      return acc;
-    }, []);
-  }, [locations, matrix]);
+    // Visual-only return to start row
+    list.push({
+      ...locations[0],
+      id: `${locations[0].id}-return`,
+      accumulated: totalDistanceKm.toFixed(2),
+      isStart: false,
+      isReturn: true,
+    });
+
+    return list;
+  }, [locations, matrix, totalDistanceKm]);
 
   if (locations.length === 0) return null;
 
@@ -58,7 +68,7 @@ const Result = () => {
         maxWidth: '800px',
         margin: '0 auto',
         fontFamily: 'sans-serif',
-        minHeight: '100vh', 
+        minHeight: '100vh',
       }}
     >
       {/* BACK */}
@@ -98,19 +108,17 @@ const Result = () => {
           }}
         >
           <Navigation size={20} />
-          Total Road Distance: {distance} km
+          Total Road Distance: {totalDistanceKm.toFixed(2)} km
         </div>
       </div>
 
-      {/* SCROLLABLE LIST */}
+      {/* LIST */}
       <div
         style={{
           backgroundColor: 'white',
           borderRadius: '24px',
           padding: '10px 30px',
           boxShadow: '0 10px 30px rgba(0,0,0,0.05)',
-          maxHeight: '70vh',     
-          overflowY: 'auto',    
         }}
       >
         {pathWithDistances.map((loc, i) => (
@@ -134,7 +142,7 @@ const Result = () => {
                   height: '32px',
                   backgroundColor: loc.isReturn
                     ? '#f97316'
-                    : i === 0
+                    : loc.isStart
                     ? '#10b981'
                     : '#3b82f6',
                   color: 'white',
@@ -160,7 +168,7 @@ const Result = () => {
                   {loc.name}
                 </span>
 
-                {i === 0 && (
+                {loc.isStart && (
                   <span
                     style={{
                       marginLeft: '10px',
@@ -180,7 +188,6 @@ const Result = () => {
                       fontSize: '12px',
                       color: '#f97316',
                       fontWeight: 'bold',
-                      textTransform: 'uppercase',
                     }}
                   >
                     (TOUR COMPLETE – RETURN TO START)
