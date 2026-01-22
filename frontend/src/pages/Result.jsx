@@ -20,22 +20,17 @@ const Result = () => {
     };
   }, [state]);
 
-  /**
-   * Build accumulated distances WITHOUT double-counting return-to-start
-   */
+
   const pathWithDistances = useMemo(() => {
-    if (locations.length === 0) return [];
+    if (locations.length === 0 || !matrix.length) return [];
 
     let running = 0;
 
     const list = locations.map((loc, i) => {
-      if (
-        i > 0 &&
-        Number.isInteger(locations[i - 1]?.originalIdx) &&
-        Number.isInteger(loc?.originalIdx)
-      ) {
-        const d =
-          matrix[locations[i - 1].originalIdx]?.[loc.originalIdx] ?? 0;
+      if (i > 0) {
+        const prevIdx = locations[i - 1].originalIdx;
+        const currIdx = loc.originalIdx;
+        const d = matrix[prevIdx]?.[currIdx] ?? 0;
         running += d;
       }
 
@@ -47,7 +42,6 @@ const Result = () => {
       };
     });
 
-    // Visual-only return to start row
     list.push({
       ...locations[0],
       id: `${locations[0].id}-return`,
@@ -71,7 +65,6 @@ const Result = () => {
         minHeight: '100vh',
       }}
     >
-      {/* BACK */}
       <button
         onClick={() => navigate('/')}
         style={{
@@ -88,7 +81,6 @@ const Result = () => {
         <ArrowLeft size={18} /> Back to Map
       </button>
 
-      {/* HEADER */}
       <div style={{ textAlign: 'center', marginTop: '20px' }}>
         <h1 style={{ fontSize: '32px', color: '#1e293b', fontWeight: 800 }}>
           Optimized Route (TSP)
@@ -112,7 +104,6 @@ const Result = () => {
         </div>
       </div>
 
-      {/* LIST */}
       <div
         style={{
           backgroundColor: 'white',

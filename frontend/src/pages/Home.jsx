@@ -6,18 +6,15 @@ import BucketList from '../components/BucketList';
 import Map from '../components/Map';
 
 
-console.log('API URL =', import.meta.env.VITE_API_URL);
-
 const Home = () => {
   const [bucketList, setBucketList] = useState([]);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
-
   const handleAddLocation = (place) => {
     if (bucketList.length >= 15) return;
 
-    setBucketList(prev => [
+    setBucketList((prev) => [
       ...prev,
       {
         ...place,
@@ -26,18 +23,17 @@ const Home = () => {
     ]);
   };
 
-
   const handleOptimize = async () => {
     if (bucketList.length < 2 || loading) return;
 
     setLoading(true);
 
     try {
-
-      const cleanLocations = bucketList.map(loc => ({
+      const cleanLocations = bucketList.map((loc, index) => ({
         lat: Number(loc.lat),
         lng: Number(loc.lng),
         name: loc.name || loc.display_name || 'Unknown',
+        originalIdx: index, 
       }));
 
       const res = await axios.post(
@@ -53,8 +49,8 @@ const Home = () => {
         },
       });
     } catch (err) {
-      console.error(err.response?.data || err.message);
-      alert(err.response?.data?.error || 'Backend error');
+      console.error('Optimization error:', err.response?.data || err.message);
+      alert(err.response?.data?.error || 'Backend error: Could not optimize route');
     } finally {
       setLoading(false);
     }
@@ -69,7 +65,6 @@ const Home = () => {
         backgroundColor: '#f8fafc',
       }}
     >
-
       <div
         style={{
           flex: 1,
@@ -79,7 +74,6 @@ const Home = () => {
           gap: '20px',
         }}
       >
-
         <div
           style={{
             display: 'flex',
@@ -109,6 +103,7 @@ const Home = () => {
             borderRadius: '24px',
             border: '1px solid #e2e8f0',
             position: 'relative',
+            overflow: 'hidden'
           }}
         >
           <Map locations={bucketList} />
@@ -124,14 +119,17 @@ const Home = () => {
                 alignItems: 'center',
                 justifyContent: 'center',
                 fontWeight: 'bold',
+                fontSize: '18px',
+                color: '#3b82f6'
               }}
             >
-              Optimizing route…
+              Finding the best route…
             </div>
           )}
         </div>
       </div>
 
+      {/* RIGHT SIDE: BUCKET LIST */}
       <div
         style={{
           width: '380px',
@@ -157,7 +155,7 @@ const Home = () => {
           list={bucketList}
           loading={loading}
           onRemove={(id) =>
-            setBucketList(prev => prev.filter(l => l.id !== id))
+            setBucketList((prev) => prev.filter((l) => l.id !== id))
           }
           onOptimize={handleOptimize}
         />

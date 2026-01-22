@@ -1,6 +1,7 @@
 #include <iostream>
 #include <vector>
 #include <algorithm>
+#include <cstring>
 
 using namespace std;
 
@@ -30,7 +31,8 @@ long long solve(int mask, int pos) {
 void printPath(int mask, int pos) {
     cout << pos << " ";
     if (mask == (1 << n) - 1) return;
-    printPath(mask | (1 << parent[mask][pos]), parent[mask][pos]);
+    int nextNode = parent[mask][pos];
+    printPath(mask | (1 << nextNode), nextNode);
 }
 
 int main() {
@@ -38,9 +40,8 @@ int main() {
     for (int i = 0; i < n; i++) {
         for (int j = 0; j < n; j++) cin >> dist[i][j];
     }
-    for (int i = 0; i < (1 << n); i++) {
-        for (int j = 0; j < n; j++) memo[i][j] = -1;
-    }
+    memset(memo, -1, sizeof(memo));
+    
     cout << solve(1 << startNode, startNode) << endl;
     printPath(1 << startNode, startNode);
     return 0;
