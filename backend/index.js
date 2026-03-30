@@ -19,6 +19,10 @@ async function getRealDistanceMatrix(locations) {
   }
 }
 
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', uptime: process.uptime() });
+});
+
 app.post('/api/optimize', async (req, res) => {
   const { locations } = req.body;
   if (!locations || locations.length < 2) return res.status(400).send('Too few locations');
@@ -27,9 +31,9 @@ app.post('/api/optimize', async (req, res) => {
   if (!matrix) return res.status(500).json({ error: 'OSRM Failed' });
 
   const n = locations.length;
-  let inputData = `${n} 0\n`; 
-  
-  const MAX_DIST = 10_000_000; 
+  let inputData = `${n} 0\n`;
+
+  const MAX_DIST = 10_000_000;
 
   for (let i = 0; i < n; i++) {
     for (let j = 0; j < n; j++) {
