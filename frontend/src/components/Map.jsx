@@ -14,12 +14,18 @@ function RecenterMap({ center }) {
   return null;
 }
 
-const Map = ({ locations }) => {
-  const center = locations.length > 0 ? [locations[locations.length - 1].lat, locations[locations.length - 1].lng] : [12.9716, 77.5946];
+const Map = ({ locations, dark }) => {
+  const center = locations.length > 0
+    ? [locations[locations.length - 1].lat, locations[locations.length - 1].lng]
+    : [12.9716, 77.5946];
+
+  const tileUrl = dark
+    ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+    : 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
 
   return (
     <MapContainer center={center} zoom={13} style={{ height: '100%', width: '100%' }}>
-      <TileLayer url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png" />
+      <TileLayer key={tileUrl} url={tileUrl} />
       {locations.map((loc) => (
         <Marker key={loc.id} position={[loc.lat, loc.lng]} />
       ))}
