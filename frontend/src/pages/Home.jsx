@@ -27,7 +27,7 @@ const Home = ({ bucketList, setBucketList }) => {
     loadingBg: dark ? 'rgba(15,23,42,0.8)' : 'rgba(248,250,252,0.8)',
     loadingColor: '#3b82f6',
     toggleBg: dark ? '#334155' : '#f1f5f9',
-    toggleColor: dark ? '#f1f5f9' : '#334155',
+    toggleColor: dark ? '#f1f5f9' : '#334151',
     emptyMapColor: dark ? '#334155' : '#cbd5e1',
     emptyMapTextColor: dark ? '#475569' : '#94a3b8',
     locateBg: dark ? '#1e293b' : '#ffffff',
@@ -172,18 +172,17 @@ const Home = ({ bucketList, setBucketList }) => {
             dark={dark}
             userLocation={userLocation}
             radiusKm={radiusKm}
+            onAddPlace={handleAddLocation}
+            isFull={bucketList.length >= 15}
           />
 
-          {/* ── Detect Location Button — bottom-right, Google Maps style ── */}
-          {/* Sits just above the Google attribution bar (~32px) + extra spacing */}
+          {/* ── Detect Location Button ── */}
           <button
             onClick={handleDetectLocation}
             disabled={locating}
             title="Detect my location"
             style={{
               position: 'absolute',
-              // Place it above fullscreen btn (which sits ~50px from bottom)
-              // and above the Google logo (~32px). 50 + 44 + 8 = 102 from bottom.
               bottom: '102px',
               right: '10px',
               width: '40px', height: '40px',
@@ -212,7 +211,7 @@ const Home = ({ bucketList, setBucketList }) => {
             )}
           </button>
 
-          {/* ── Radius Selector — bottom-left, above Google logo ── */}
+          {/* ── Radius Selector ── */}
           {userLocation && (
             <div style={{
               position: 'absolute',
@@ -242,29 +241,24 @@ const Home = ({ bucketList, setBucketList }) => {
                   {radiusKm === 0 ? 'Off' : `${radiusKm} km`}
                 </span>
               </div>
-
               <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
                 {RADIUS_OPTIONS.map((r) => (
                   <button
                     key={r}
                     onClick={() => setRadiusKm(r)}
                     style={{
-                      padding: '4px 10px',
-                      borderRadius: '20px',
+                      padding: '4px 10px', borderRadius: '20px',
                       border: `1.5px solid ${radiusKm === r ? '#4285F4' : (dark ? '#334155' : '#e2e8f0')}`,
                       backgroundColor: radiusKm === r ? '#4285F4' : 'transparent',
                       color: radiusKm === r ? 'white' : t.radiusSubText,
                       fontSize: '11px', fontWeight: 700,
-                      cursor: 'pointer',
-                      transition: 'all 0.15s',
-                      flexShrink: 0,
+                      cursor: 'pointer', transition: 'all 0.15s', flexShrink: 0,
                     }}
                   >
                     {r === 0 ? 'Off' : `${r}km`}
                   </button>
                 ))}
               </div>
-
               <p style={{ margin: 0, fontSize: '10px', color: t.radiusSubText, lineHeight: 1.4 }}>
                 Dims the map outside the selected radius from your location.
               </p>
@@ -281,10 +275,8 @@ const Home = ({ bucketList, setBucketList }) => {
             }}>
               <div style={{
                 backgroundColor: dark ? 'rgba(30,41,59,0.85)' : 'rgba(255,255,255,0.85)',
-                backdropFilter: 'blur(6px)',
-                borderRadius: '16px',
-                padding: '20px 28px',
-                textAlign: 'center',
+                backdropFilter: 'blur(6px)', borderRadius: '16px',
+                padding: '20px 28px', textAlign: 'center',
                 border: `1px solid ${t.mapBorder}`,
                 boxShadow: dark ? '0 8px 32px rgba(0,0,0,0.4)' : '0 8px 32px rgba(0,0,0,0.08)',
               }}>
@@ -303,17 +295,13 @@ const Home = ({ bucketList, setBucketList }) => {
           {loading && (
             <div style={{
               position: 'absolute', inset: 0,
-              backgroundColor: t.loadingBg,
-              backdropFilter: 'blur(4px)',
-              zIndex: 1000,
-              display: 'flex', flexDirection: 'column',
-              alignItems: 'center', justifyContent: 'center',
-              gap: '14px',
+              backgroundColor: t.loadingBg, backdropFilter: 'blur(4px)',
+              zIndex: 1000, display: 'flex', flexDirection: 'column',
+              alignItems: 'center', justifyContent: 'center', gap: '14px',
             }}>
               <div style={{
                 width: '40px', height: '40px', borderRadius: '50%',
-                border: '3px solid rgba(59,130,246,0.2)',
-                borderTopColor: '#3b82f6',
+                border: '3px solid rgba(59,130,246,0.2)', borderTopColor: '#3b82f6',
                 animation: 'spin 0.75s linear infinite',
               }} />
               <span style={{ fontWeight: 700, fontSize: '15px', color: t.loadingColor, letterSpacing: '-0.01em' }}>
@@ -330,12 +318,10 @@ const Home = ({ bucketList, setBucketList }) => {
 
       {/* ── Sidebar ── */}
       <div style={{
-        width: '360px',
-        flexShrink: 0,
+        width: '360px', flexShrink: 0,
         backgroundColor: t.sidebarBg,
         borderLeft: `1px solid ${t.sidebarBorder}`,
-        display: 'flex',
-        flexDirection: 'column',
+        display: 'flex', flexDirection: 'column',
         transition: 'background-color 0.3s',
       }}>
         <BucketList

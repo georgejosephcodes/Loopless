@@ -18,7 +18,7 @@ const Result = () => {
     if (!state || !Array.isArray(state.locations) || state.locations.length === 0) {
       navigate('/', { replace: true });
     }
-  }, [state, navigate]);
+  },[state, navigate]);
 
   const { locations, totalDistanceKm, matrix } = useMemo(() => ({
     locations: Array.isArray(state?.locations) ? state.locations : [],
