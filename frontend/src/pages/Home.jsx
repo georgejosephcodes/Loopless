@@ -1,19 +1,53 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import SearchBar from '../components/SearchBar';
 import BucketList from '../components/BucketList';
 import Map from '../components/Map';
 import { useTheme } from '../ThemeContext';
-import { Moon, Sun, MapPin, Locate } from 'lucide-react';
+import { Moon, Sun, MapPin, Locate, Sparkles, ChevronDown, Check } from 'lucide-react';
+import toast from 'react-hot-toast';
+
+const CATEGORIES = [
+  'Mixed', 'Nature', 'Food', 'Tourist', 'Shopping', 'Hidden Gems',
+  'Historical', 'Religious', 'Adventure', 'Nightlife', 'Family Friendly',
+  'Romantic', 'Luxury', 'Budget', 'Photography Spots', 'Road Trip',
+  'Local Favorites', 'Cafes', 'Museums', 'Beaches'
+];
+
+const CATEGORY_ICONS = {
+  Mixed: '🌐', Nature: '🌿', Food: '🍽️', Tourist: '🗺️', Shopping: '🛍️',
+  'Hidden Gems': '💎', Historical: '🏛️', Religious: '🕌', Adventure: '🧗',
+  Nightlife: '🌙', 'Family Friendly': '👨‍👩‍👧', Romantic: '💕', Luxury: '✨',
+  Budget: '💰', 'Photography Spots': '📸', 'Road Trip': '🚗',
+  'Local Favorites': '❤️', Cafes: '☕', Museums: '🖼️', Beaches: '🏖️'
+};
 
 const Home = ({ bucketList, setBucketList }) => {
   const [loading, setLoading] = useState(false);
   const [userLocation, setUserLocation] = useState(null);
   const [locating, setLocating] = useState(false);
   const [radiusKm, setRadiusKm] = useState(0);
+  const [showAIModal, setShowAIModal] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiRadius, setAiRadius] = useState(25);
+  const [aiMaxStops, setAiMaxStops] = useState(5);
+  const [aiCategory, setAiCategory] = useState('Mixed');
+  const [categoryOpen, setCategoryOpen] = useState(false);
+  const categoryRef = useRef(null);
   const navigate = useNavigate();
   const { dark, toggle } = useTheme();
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (categoryRef.current && !categoryRef.current.contains(e.target)) {
+        setCategoryOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const t = {
     bg: dark ? '#0f172a' : '#f8fafc',
@@ -37,10 +71,24 @@ const Home = ({ bucketList, setBucketList }) => {
     radiusBorder: dark ? '#334155' : '#e2e8f0',
     radiusText: dark ? '#e2e8f0' : '#1e293b',
     radiusSubText: dark ? '#64748b' : '#94a3b8',
+    dropdownBg: dark ? '#1e293b' : '#ffffff',
+    dropdownBorder: dark ? '#334155' : '#e2e8f0',
+    dropdownHover: dark ? '#2d3f57' : '#f5f3ff',
+    dropdownText: dark ? '#e2e8f0' : '#1e293b',
+    dropdownSubText: dark ? '#64748b' : '#94a3b8',
   };
 
   const handleAddLocation = (place) => {
     if (bucketList.length >= 15) return;
+    const isDuplicate = bucketList.some(
+      (loc) =>
+        Math.abs(Number(loc.lat) - Number(place.lat)) < 0.0001 &&
+        Math.abs(Number(loc.lng) - Number(place.lng)) < 0.0001
+    );
+    if (isDuplicate) {
+      toast.error('This stop is already in your route.');
+      return;
+    }
     setBucketList((prev) => [...prev, { ...place, id: crypto.randomUUID() }]);
   };
 
@@ -87,6 +135,7 @@ const Home = ({ bucketList, setBucketList }) => {
           locations: res.data.path,
           distance: res.data.distance,
           matrix: res.data.matrix,
+          routeGeometry: res.data.routeGeometry,
         },
       });
     } catch (err) {
@@ -94,6 +143,69 @@ const Home = ({ bucketList, setBucketList }) => {
       alert(err.response?.data?.error || 'Backend error: Could not optimize route. Please try again.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleAIAutofill = async () => {
+    if (bucketList.length === 0) {
+      toast.error('Add your first place before using AI Autofill.');
+      return;
+    }
+    const firstPlace = bucketList[0];
+    setAiLoading(true);
+    try {
+      const remainingSlots = Math.min(aiMaxStops, 15 - bucketList.length);
+      if (remainingSlots <= 0) {
+        toast.error('Bucket list is already full.');
+        setAiLoading(false);
+        return;
+      }
+      const res = await axios.post(
+        `${import.meta.env.VITE_API_URL}/api/ai-autofill`,
+        {
+          startPlace: firstPlace.name,
+          lat: firstPlace.lat,
+          lng: firstPlace.lng,
+          radiusKm: aiRadius,
+          maxStops: remainingSlots,
+          category: aiCategory,
+        }
+      );
+      const aiPlaces = res.data.places || [];
+      if (!aiPlaces.length) {
+        toast.error('No valid places found.');
+        return;
+      }
+      const existingLocations = [...bucketList];
+      const newPlacesToAdd = [];
+      aiPlaces.forEach((place) => {
+        const isDuplicate =
+          existingLocations.some(
+            (loc) =>
+              Math.abs(Number(loc.lat) - Number(place.lat)) < 0.0001 &&
+              Math.abs(Number(loc.lng) - Number(place.lng)) < 0.0001
+          ) ||
+          newPlacesToAdd.some(
+            (loc) =>
+              Math.abs(Number(loc.lat) - Number(place.lat)) < 0.0001 &&
+              Math.abs(Number(loc.lng) - Number(place.lng)) < 0.0001
+          );
+        if (!isDuplicate) {
+          newPlacesToAdd.push({ ...place, id: crypto.randomUUID() });
+        }
+      });
+      if (newPlacesToAdd.length === 0) {
+        toast.error('All suggested places were duplicates.');
+        return;
+      }
+      setBucketList((prev) => [...prev, ...newPlacesToAdd]);
+      toast.success(`✨ Added ${newPlacesToAdd.length} new places`);
+      setShowAIModal(false);
+    } catch (err) {
+      console.error('AI Autofill failed:', err.response?.data || err.message);
+      toast.error(err.response?.data?.error || 'AI Autofill failed.');
+    } finally {
+      setAiLoading(false);
     }
   };
 
@@ -120,7 +232,7 @@ const Home = ({ bucketList, setBucketList }) => {
         {/* ── Navbar ── */}
         <div style={{
           display: 'flex',
-          justifyContent: 'space-between',
+          justifyContent: 'flex-start',
           alignItems: 'center',
           backgroundColor: t.navBg,
           padding: '11px 20px',
@@ -128,7 +240,7 @@ const Home = ({ bucketList, setBucketList }) => {
           boxShadow: t.navShadow,
           border: `1px solid ${t.navBorder}`,
           transition: 'background-color 0.3s',
-          gap: '16px',
+          gap: '10px',
           flexShrink: 0,
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
@@ -139,23 +251,58 @@ const Home = ({ bucketList, setBucketList }) => {
             </h1>
           </div>
 
-          <div style={{ flex: 1, maxWidth: '500px' }}>
+          <div style={{ flex: 1, maxWidth: '500px', marginRight: '24px' }}>
             <SearchBar onAdd={handleAddLocation} disabled={bucketList.length >= 15} dark={dark} />
           </div>
 
-          <button
-            onClick={toggle}
-            title={dark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-            style={{
-              border: 'none', borderRadius: '10px',
-              backgroundColor: t.toggleBg, color: t.toggleColor,
-              cursor: 'pointer', padding: '8px 10px',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              transition: 'background-color 0.3s', flexShrink: 0,
-            }}
-          >
-            {dark ? <Sun size={18} /> : <Moon size={18} />}
-          </button>
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <button
+              onClick={() => {
+                if (bucketList.length === 0) {
+                  toast.error('Add your first place before using AI Autofill.');
+                  return;
+                }
+                setAiMaxStops(Math.max(1, Math.min(5, 15 - bucketList.length)));
+                setShowAIModal(true);
+              }}
+              title="AI Trip Planner"
+              style={{
+                border: 'none',
+                borderRadius: '10px',
+                backgroundColor: t.toggleBg,
+                color: '#8b5cf6',
+                cursor: 'pointer',
+                padding: '8px 10px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'background-color 0.3s',
+                flexShrink: 0,
+              }}
+            >
+              <Sparkles size={18} />
+            </button>
+
+            <button
+              onClick={toggle}
+              title={dark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+              style={{
+                border: 'none',
+                borderRadius: '10px',
+                backgroundColor: t.toggleBg,
+                color: t.toggleColor,
+                cursor: 'pointer',
+                padding: '8px 10px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'background-color 0.3s',
+                flexShrink: 0,
+              }}
+            >
+              {dark ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
+          </div>
         </div>
 
         {/* ── Map Area ── */}
@@ -187,14 +334,14 @@ const Home = ({ bucketList, setBucketList }) => {
               right: '10px',
               width: '40px', height: '40px',
               borderRadius: '2px',
-              backgroundColor: t.locateBg,
+              backgroundColor: userLocation ? '#4285F4' : t.locateBg,
               border: 'none',
               boxShadow: '0 1px 4px -1px rgba(0,0,0,0.3)',
               cursor: locating ? 'not-allowed' : 'pointer',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               zIndex: 500,
               transition: 'box-shadow 0.15s',
-              color: userLocation ? '#4285F4' : t.locateColor,
+              color: userLocation ? '#ffffff' : t.locateColor,
               outline: 'none',
             }}
             onMouseEnter={(e) => { e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.25)'; }}
@@ -315,6 +462,233 @@ const Home = ({ bucketList, setBucketList }) => {
           )}
         </div>
       </div>
+
+      {/* ── AI Modal ── */}
+      {showAIModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0,0,0,0.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 5000,
+          }}
+          onClick={() => !aiLoading && setShowAIModal(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: '420px',
+              maxWidth: '92vw',
+              backgroundColor: t.navBg,
+              border: `1px solid ${t.navBorder}`,
+              borderRadius: '20px',
+              padding: '24px',
+              boxShadow: '0 20px 50px rgba(0,0,0,0.25)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '20px',
+            }}
+          >
+            <h2 style={{ margin: 0, fontSize: '22px', fontWeight: 800, color: t.titleColor }}>
+              ✨ AI Trip Planner
+            </h2>
+
+            {/* Radius */}
+            <div>
+              <p style={{ margin: '0 0 10px', fontWeight: 700, color: t.titleColor }}>
+                Search Radius
+              </p>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                {[5, 10, 25, 50, 100].map((r) => (
+                  <button
+                    key={r}
+                    onClick={() => setAiRadius(r)}
+                    style={{
+                      padding: '7px 12px',
+                      borderRadius: '20px',
+                      border: `1.5px solid ${aiRadius === r ? '#8b5cf6' : t.navBorder}`,
+                      backgroundColor: aiRadius === r ? '#8b5cf6' : 'transparent',
+                      color: aiRadius === r ? '#fff' : t.titleColor,
+                      cursor: 'pointer',
+                      fontWeight: 700,
+                    }}
+                  >
+                    {r} km
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Stops */}
+            <div>
+              <p style={{ margin: '0 0 10px', fontWeight: 700, color: t.titleColor }}>
+                Total Route Stops
+              </p>
+              <input
+                type="range"
+                min="1"
+                max={Math.max(1, 15 - bucketList.length)}
+                value={aiMaxStops}
+                onChange={(e) => setAiMaxStops(Number(e.target.value))}
+                style={{ width: '100%' }}
+              />
+              <p style={{ margin: '8px 0 0', color: '#8b5cf6', fontWeight: 700 }}>
+                {aiMaxStops} places
+              </p>
+            </div>
+
+            {/* ── Custom Category Dropdown ── */}
+            <div>
+              <p style={{ margin: '0 0 10px', fontWeight: 700, color: t.titleColor }}>
+                Category
+              </p>
+              <div ref={categoryRef} style={{ position: 'relative' }}>
+                {/* Trigger button */}
+                <button
+                  onClick={() => setCategoryOpen((o) => !o)}
+                  style={{
+                    width: '100%',
+                    padding: '11px 16px',
+                    borderRadius: '12px',
+                    border: `1.5px solid ${categoryOpen ? '#8b5cf6' : t.navBorder}`,
+                    backgroundColor: t.bg,
+                    color: t.titleColor,
+                    fontWeight: 600,
+                    fontSize: '14px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '8px',
+                    transition: 'border-color 0.15s, box-shadow 0.15s',
+                    boxShadow: categoryOpen ? '0 0 0 3px rgba(139,92,246,0.15)' : 'none',
+                    outline: 'none',
+                  }}
+                >
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '16px' }}>{CATEGORY_ICONS[aiCategory]}</span>
+                    <span>{aiCategory}</span>
+                  </span>
+                  <ChevronDown
+                    size={16}
+                    color={t.dropdownSubText}
+                    style={{
+                      transition: 'transform 0.2s',
+                      transform: categoryOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+                      flexShrink: 0,
+                    }}
+                  />
+                </button>
+
+                {/* Dropdown list */}
+                {categoryOpen && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: 'calc(100% + 6px)',
+                      left: 0,
+                      right: 0,
+                      backgroundColor: t.dropdownBg,
+                      border: `1.5px solid ${t.dropdownBorder}`,
+                      borderRadius: '12px',
+                      boxShadow: dark
+                        ? '0 8px 32px rgba(0,0,0,0.5)'
+                        : '0 8px 32px rgba(0,0,0,0.12)',
+                      zIndex: 9999,
+                      maxHeight: '220px',
+                      overflowY: 'auto',
+                      padding: '6px',
+                    }}
+                  >
+                    {CATEGORIES.map((cat) => {
+                      const isSelected = aiCategory === cat;
+                      return (
+                        <button
+                          key={cat}
+                          onClick={() => {
+                            setAiCategory(cat);
+                            setCategoryOpen(false);
+                          }}
+                          style={{
+                            width: '100%',
+                            padding: '9px 12px',
+                            borderRadius: '8px',
+                            border: 'none',
+                            backgroundColor: isSelected
+                              ? (dark ? 'rgba(139,92,246,0.18)' : '#f5f3ff')
+                              : 'transparent',
+                            color: isSelected ? '#8b5cf6' : t.dropdownText,
+                            fontWeight: isSelected ? 700 : 500,
+                            fontSize: '13.5px',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
+                            textAlign: 'left',
+                            transition: 'background-color 0.1s',
+                          }}
+                          onMouseEnter={(e) => {
+                            if (!isSelected) e.currentTarget.style.backgroundColor = t.dropdownHover;
+                          }}
+                          onMouseLeave={(e) => {
+                            if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent';
+                          }}
+                        >
+                          <span style={{ fontSize: '15px', width: '20px', textAlign: 'center', flexShrink: 0 }}>
+                            {CATEGORY_ICONS[cat]}
+                          </span>
+                          <span style={{ flex: 1 }}>{cat}</span>
+                          {isSelected && (
+                            <Check size={14} color="#8b5cf6" style={{ flexShrink: 0 }} />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button
+                onClick={() => setShowAIModal(false)}
+                disabled={aiLoading}
+                style={{
+                  padding: '10px 16px',
+                  borderRadius: '10px',
+                  border: `1px solid ${t.navBorder}`,
+                  background: 'transparent',
+                  color: t.titleColor,
+                  cursor: 'pointer',
+                  fontWeight: 700,
+                }}
+              >
+                Cancel
+              </button>
+
+              <button
+                onClick={handleAIAutofill}
+                disabled={aiLoading}
+                style={{
+                  padding: '10px 16px',
+                  borderRadius: '10px',
+                  border: 'none',
+                  backgroundColor: '#8b5cf6',
+                  color: '#fff',
+                  cursor: aiLoading ? 'not-allowed' : 'pointer',
+                  fontWeight: 800,
+                }}
+              >
+                {aiLoading ? 'Generating...' : 'Generate Route'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Sidebar ── */}
       <div style={{

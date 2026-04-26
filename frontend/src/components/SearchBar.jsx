@@ -1,13 +1,10 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { useJsApiLoader } from '@react-google-maps/api';
 import { Search, MapPin, X } from 'lucide-react';
-
-const LIBRARIES = ['places'];
 
 // ─── Individual suggestion item ───────────────────────────────────────────────
 function SuggestionItem({ suggestion, onSelect, dark, isHighlighted }) {
-  const main = suggestion.structured_formatting?.main_text ?? suggestion.description.split(',')[0];
-  const secondary = suggestion.structured_formatting?.secondary_text ?? suggestion.description;
+  const main = suggestion.properties?.name || suggestion.properties?.formatted.split(',')[0];
+  const secondary = suggestion.properties?.formatted;
 
   const t = {
     itemBg: isHighlighted
@@ -56,89 +53,58 @@ const SearchBar = ({ onAdd, disabled, dark }) => {
   const [showDropdown, setShowDropdown] = useState(false);
   const [highlightedIdx, setHighlightedIdx] = useState(-1);
   const [isFocused, setIsFocused] = useState(false);
+  const isLoaded = true;
 
   const inputRef = useRef(null);
-  const autocompleteService = useRef(null);
-  const placesService = useRef(null);
-  const sessionToken = useRef(null);
 
-  const { isLoaded } = useJsApiLoader({
-    googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY,
-    libraries: LIBRARIES,
-  });
-
-  // Initialise services once Maps SDK is ready
-  useEffect(() => {
-    if (!isLoaded || !window.google) return;
-    autocompleteService.current = new window.google.maps.places.AutocompleteService();
-    // PlacesService needs a DOM node or map instance
-    const dummyDiv = document.createElement('div');
-    placesService.current = new window.google.maps.places.PlacesService(dummyDiv);
-    sessionToken.current = new window.google.maps.places.AutocompleteSessionToken();
-  }, [isLoaded]);
-
-  // ── Fetch predictions ──────────────────────────────────────────────────────
-  const fetchPredictions = useCallback((value) => {
-    if (!autocompleteService.current || value.trim().length < 2) {
+  // ── Fetch predictions from Geoapify ────────────────────────────────────────
+  const fetchPredictions = useCallback(async (value) => {
+    if (value.trim().length < 2) {
       setSuggestions([]);
       setShowDropdown(false);
       return;
     }
 
-    autocompleteService.current.getPlacePredictions(
-      {
-        input: value,
-        sessionToken: sessionToken.current,
-        types: ['establishment', 'geocode'],
-      },
-      (predictions, status) => {
-        if (
-          status === window.google.maps.places.PlacesServiceStatus.OK &&
-          predictions
-        ) {
-          setSuggestions(predictions);
-          setShowDropdown(true);
-          setHighlightedIdx(-1);
-        } else {
-          setSuggestions([]);
-          setShowDropdown(false);
-        }
-      }
+    try {
+    const res = await fetch(
+      `https://api.geoapify.com/v1/geocode/autocomplete?text=${encodeURIComponent(
+        value
+      )}&limit=5&filter=countrycode:in&bias=countrycode:in&apiKey=${import.meta.env.VITE_GEOAPIFY_API_KEY}`
     );
+
+      const data = await res.json();
+
+      if (data.features?.length) {
+        setSuggestions(data.features);
+        setShowDropdown(true);
+        setHighlightedIdx(-1);
+      } else {
+        setSuggestions([]);
+        setShowDropdown(false);
+      }
+    } catch (err) {
+      console.error('Geoapify fetch failed:', err);
+      setSuggestions([]);
+      setShowDropdown(false);
+    }
   }, []);
 
   // Debounce
   useEffect(() => {
-    if (!isLoaded) return;
     const timer = setTimeout(() => fetchPredictions(input), 300);
     return () => clearTimeout(timer);
-  }, [input, isLoaded, fetchPredictions]);
+  }, [input, fetchPredictions]);
 
-  // ── Resolve place_id → lat/lng ─────────────────────────────────────────────
+  // ── Handle selection ───────────────────────────────────────────────────────
   const handleSelect = useCallback((prediction) => {
-    if (!placesService.current) return;
-
-    placesService.current.getDetails(
-      {
-        placeId: prediction.place_id,
-        fields: ['name', 'geometry', 'formatted_address'],
-        sessionToken: sessionToken.current,
-      },
-      (place, status) => {
-        if (
-          status === window.google.maps.places.PlacesServiceStatus.OK &&
-          place?.geometry?.location
-        ) {
-          onAdd({
-            name: place.name ?? prediction.structured_formatting?.main_text ?? prediction.description,
-            lat: place.geometry.location.lat(),
-            lng: place.geometry.location.lng(),
-          });
-          // Rotate session token after completed session
-          sessionToken.current = new window.google.maps.places.AutocompleteSessionToken();
-        }
-      }
-    );
+    onAdd({
+      name:
+        prediction.properties?.name ||
+        prediction.properties?.formatted ||
+        'Unknown',
+      lat: prediction.properties.lat,
+      lng: prediction.properties.lon,
+    });
 
     setInput('');
     setSuggestions([]);
@@ -149,12 +115,17 @@ const SearchBar = ({ onAdd, disabled, dark }) => {
   // ── Keyboard navigation ────────────────────────────────────────────────────
   const handleKeyDown = (e) => {
     if (!showDropdown || suggestions.length === 0) return;
+
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      setHighlightedIdx((prev) => Math.min(prev + 1, suggestions.length - 1));
+      setHighlightedIdx((prev) =>
+        Math.min(prev + 1, suggestions.length - 1)
+      );
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      setHighlightedIdx((prev) => Math.max(prev - 1, 0));
+      setHighlightedIdx((prev) =>
+        Math.max(prev - 1, 0)
+      );
     } else if (e.key === 'Enter' && highlightedIdx >= 0) {
       e.preventDefault();
       handleSelect(suggestions[highlightedIdx]);
@@ -227,7 +198,6 @@ const SearchBar = ({ onAdd, disabled, dark }) => {
           }}
           onBlur={() => {
             setIsFocused(false);
-            // Small delay so onMouseDown on suggestion fires first
             setTimeout(() => setShowDropdown(false), 150);
           }}
           style={{
@@ -266,25 +236,13 @@ const SearchBar = ({ onAdd, disabled, dark }) => {
         }}>
           {suggestions.map((s, i) => (
             <SuggestionItem
-              key={s.place_id}
+              key={`${s.properties.lat}-${s.properties.lon}-${i}`}
               suggestion={s}
               onSelect={handleSelect}
               dark={dark}
               isHighlighted={i === highlightedIdx}
             />
           ))}
-
-          {/* Google attribution (required by ToS) */}
-          <li style={{
-            padding: '6px 14px 4px',
-            display: 'flex', justifyContent: 'flex-end',
-          }}>
-            <img
-              src="https://maps.gstatic.com/mapfiles/api-3/images/powered-by-google-on-white3.png"
-              alt="Powered by Google"
-              style={{ height: '14px', opacity: 0.6 }}
-            />
-          </li>
         </ul>
       )}
 

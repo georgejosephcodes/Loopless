@@ -20,11 +20,12 @@ const Result = () => {
     }
   },[state, navigate]);
 
-  const { locations, totalDistanceKm, matrix } = useMemo(() => ({
-    locations: Array.isArray(state?.locations) ? state.locations : [],
-    totalDistanceKm: Number(state?.distance ?? 0),
-    matrix: Array.isArray(state?.matrix) ? state.matrix : [],
-  }), [state]);
+const { locations, totalDistanceKm, matrix, routeGeometry } = useMemo(() => ({
+  locations: Array.isArray(state?.locations) ? state.locations : [],
+  totalDistanceKm: Number(state?.distance ?? 0),
+  matrix: Array.isArray(state?.matrix) ? state.matrix : [],
+  routeGeometry: Array.isArray(state?.routeGeometry) ? state.routeGeometry : [],
+}), [state]);
 
   const pathWithDistances = useMemo(() => {
     if (locations.length === 0 || !matrix.length) return [];
@@ -103,7 +104,16 @@ const Result = () => {
         gap: '16px',
       }}>
         <button
-          onClick={() => navigate('/')}
+          onClick={() =>
+  navigate('/', {
+    state: {
+      restoredBucket: locations.map((loc) => ({
+      ...loc,
+      id: loc.id || crypto.randomUUID(),
+      })),
+    },
+  })
+}
           style={{
             border: 'none', background: 'none', color: '#3b82f6',
             cursor: 'pointer', display: 'flex', alignItems: 'center',
@@ -163,6 +173,7 @@ const Result = () => {
             locations={locations}
             dark={dark}
             routePath={locations}
+            roadPath={routeGeometry}
             selectedIndex={selectedIdx}
           />
 
@@ -341,7 +352,7 @@ const Result = () => {
                       {loc.accumulated} km
                     </div>
                     <div style={{ fontSize: '9px', color: t.accumLabel, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                      accum.
+                      accumulated.
                     </div>
                   </div>
                 </div>
