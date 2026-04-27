@@ -1,358 +1,164 @@
-# Loopless — DSA-Powered Route Optimizer
+# 🗺️ Loopless — AI-Powered Trip Planning & Route Optimization
 
-Live Demo: https://loopless.netlify.app/
+> Plan smarter trips. Optimize every stop. Powered by AI + real road data.
 
-A **high-performance route optimization system** that solves the **Traveling Salesperson Problem (TSP)** using real-world road data and advanced algorithms.
-
-This project demonstrates **algorithmic problem-solving**, **optimal data structure design**, and **system architecture**, prioritizing computational efficiency over UI complexity.
+**Live Demo →** [loopless.netlify.app](https://loopless.netlify.app/)
 
 ---
 
-## Problem Statement
+## What is Loopless?
 
-Delivery services, logistics companies, and travelers need to optimize routes with:
+Loopless is a full-stack trip planning platform that combines **algorithmic route optimization**, **real-world road-distance matrices**, and **AI-powered destination discovery** to generate the most efficient multi-stop travel itineraries.
 
-- Multiple destinations to visit
-- Real-world driving distances (not straight lines)
-- A fixed starting point
-- Minimal total travel distance
-- Fast computation even with many locations
-
-Most simple route planners fail to:
-
-- Use actual road distances
-- Find the mathematically optimal route
-- Handle the computational complexity efficiently
-
-**Loopless** solves these problems using the **Held-Karp algorithm**, **OSRM road network data**, and **optimized C++ execution**.
+Unlike typical route planners, Loopless uses a **server-side C++ TSP solver**, actual road networks (not straight-line estimates), and Gemini AI to suggest and validate real nearby places — all with Redis caching for speed and cost efficiency.
 
 ---
 
-## Core Features
+## Features
 
-### Real-World Distance Matrix
+### 🤖 AI Trip Autofill (Gemini + Geoapify)
+Starting from a single location, Loopless generates nearby destinations by category using Gemini AI, then validates each place through Geoapify for real-world accuracy and radius filtering.
 
-- Fetches actual driving distances via **OSRM API**
-- No straight-line approximations
-- Accounts for real road networks and geography
+**Supported categories:**
+Nature · Food · Tourist · Shopping · Hidden Gems · Historical · Religious · Adventure · Nightlife · Family Friendly · Romantic · Luxury · Budget · Photography Spots · Road Trip · Local Favorites · Cafes · Museums · Beaches
 
----
+### 🛣️ Real-World Distance Matrix
+Uses the **OpenRouteService Matrix API** for actual drivable road distances — respecting roads, terrain, and one-way systems. No Euclidean shortcuts.
 
-### TSP Solver (Algorithmic Core)
+### ⚙️ Server-Side C++ TSP Solver
+A compiled C++ solver handles route optimization using bitmask dynamic programming — faster and more efficient than JS for exponential-complexity problems. Handles up to ~15 waypoints optimally.
 
-- **Held-Karp Algorithm** implementation
-  - Dynamic Programming with Bitmasking
-  - Time Complexity: **O(n² · 2ⁿ)**
-  - Space Complexity: **O(n · 2ⁿ)**
-- Compiled **C++ binary** for maximum performance
-- Finds provably optimal Hamiltonian cycle
+### ⚡ Redis Caching Layer
+Distance matrices, AI autofill responses, and geospatial queries are cached via **Upstash Redis**, reducing API costs and improving response times on repeated requests.
 
----
-
-### Fixed Start Point Constraint
-
-- First location added is the **mandatory starting point**
-- Route optimization begins and ends at this location
-- Realistic for delivery/sales route planning
+### 🗺️ Interactive Frontend
+- Real-road route rendering via Leaflet
+- AI Trip Planner modal
+- Dynamic radius controls
+- Duplicate-stop prevention
+- Dark mode
+- Custom pin rendering + toast notifications
 
 ---
 
-### Interactive Map Visualization
+## Architecture
 
-- Real-time route rendering using **Leaflet** and **OpenStreetMap**
-- Visual markers for all destinations
-- Step-by-step distance breakdown
-
----
-
-### Progressive Analytics
-
-Route metrics displayed:
-
-- **Total optimized distance**
-- **Leg-by-leg accumulated distance**
-- **Optimized visit order**
-
----
-
-## Key Design Decisions
-
-### Why C++ for the TSP Solver
-
-JavaScript/Node.js is too slow for:
-
-- Exponential time complexity algorithms
-- Bitwise operations on large sets
-- Memory-intensive DP tables
-
-**C++ provides:**
-
-- 10-100x faster execution
-- Efficient bit manipulation
-- Direct memory control
-
-The solver runs as a **compiled binary**, called via Node.js child process.
-
----
-
-### Why OSRM Over Euclidean Distance
-
-Straight-line distance (Euclidean) is **inaccurate** for real-world routing:
-
-- Ignores roads, rivers, mountains
-- Doesn't account for one-way streets
-- Produces invalid routes
-
-**OSRM** provides:
-
-- Actual drivable distances
-- Road network topology
-- Realistic travel times
-
----
-
-### Why Held-Karp Over Heuristics
-
-Heuristic algorithms (e.g., nearest neighbor, genetic algorithms):
-
-- Provide **approximate** solutions
-- May miss the optimal route by 20-40%
-- Lack mathematical guarantees
-
-**Held-Karp** guarantees:
-
-- Provably optimal solution
-- Deterministic results
-- Suitable for up to ~15 locations
-
----
-
-### Why Bitmasking for DP State
-
-TSP state = "visited set + current node"
-
-**Bitmasking approach:**
-```cpp
-// State: dp[mask][node]
-// mask = bitmask of visited cities
-// node = current position
-
-if (mask & (1 << i)) // City i is visited
-mask |= (1 << next)  // Mark next city as visited
 ```
-
-**Benefits:**
-
-- Compact state representation
-- O(1) set operations
-- Cache-friendly memory access
-
----
-
-## Architecture Overview
-```
-User Input (Locations)
+User Input / AI Autofill
         ↓
-React Frontend (Leaflet Map)
+React Frontend (Leaflet + UI)
         ↓
-Node.js API (Express)
+Node.js / Express API Layer
         ↓
-OSRM API → Distance Matrix
+Gemini API → Smart Place Suggestions
         ↓
-C++ TSP Solver (Held-Karp)
+Geoapify → Validation + Geocoding
         ↓
-Optimized Route
+OpenRouteService → Road Distance Matrix
         ↓
-Frontend (Route Visualization)
-```
-
----
-
-## Algorithm Breakdown
-
-### Held-Karp Dynamic Programming
-
-**Problem:** Find shortest Hamiltonian cycle starting from node 0
-
-**State Definition:**
-- `dp[mask][i]` = minimum cost to visit all cities in `mask`, ending at city `i`
-
-**Recurrence:**
-```
-dp[mask][i] = min(dp[mask ^ (1<<i)][j] + dist[j][i])
-              for all j in mask where j ≠ i
-```
-
-**Base Case:**
-```
-dp[1][0] = 0  // Start at city 0 with only city 0 visited
-```
-
-**Final Answer:**
-```
-min(dp[(1<<n)-1][i] + dist[i][0]) for all i ≠ 0
+Redis Cache Layer
+        ↓
+C++ TSP Solver
+        ↓
+Optimized Route + Geometry
+        ↓
+Frontend Visualization
 ```
 
 ---
 
 ## Tech Stack
 
-| Component          | Technology                          |
-|--------------------|-------------------------------------|
-| **Frontend**       | React, React-Leaflet, Axios         |
-| **Map Provider**   | Leaflet, OpenStreetMap              |
-| **Backend**        | Node.js, Express                    |
-| **Algorithm**      | C++ (Compiled with G++)             |
-| **Routing API**    | OSRM (Distance Matrix)              |
-| **Geocoding API**  | Nominatim                           |
+| Layer | Technology |
+|---|---|
+| Frontend | React, React Router, Leaflet, Axios |
+| Backend | Node.js, Express |
+| Algorithm Core | C++ (Bitmask DP / TSP) |
+| AI Layer | Gemini API |
+| Geocoding | Geoapify |
+| Routing | OpenRouteService |
+| Caching | Redis (Upstash) |
+| Rate Limiting | express-rate-limit |
 
 ---
 
-## API Highlights
+## API Endpoints
 
-### Routes
-- `POST /optimize` — Main TSP solver endpoint
-  - Accepts array of coordinates
-  - Returns optimized route order and total distance
+### `POST /api/optimize`
+Optimizes stop order for selected destinations.
+
+**Returns:** optimized path, distance matrix, total distance, real-road geometry
+
+### `POST /api/ai-autofill`
+Generates AI-suggested nearby destinations based on category and radius.
+
+**Inputs:** starting place, radius, max stops, category  
+**Returns:** verified nearby places
 
 ---
 
 ## Getting Started
 
-### Prerequisites
+### 1. Clone the Repository
+```bash
+git clone https://github.com/georgejosephcodes/Loopless.git
+cd Loopless
+```
 
-- **Node.js** (v18+)
-- **G++ Compiler** (for C++ solver)
-- **NPM** (Node Package Manager)
-
----
-
-### 1. Backend Setup
+### 2. Backend Setup
 ```bash
 cd backend
 npm install
 ```
 
-**Compile the C++ TSP Solver:**
-```bash
-g++ -O3 solver/tsp.cpp -o solver/tsp_solver
+Create a `.env` file in `/backend`:
+```env
+PORT=5000
+ORS_API_KEY=your_openrouteservice_key
+GEOAPIFY_API_KEY=your_geoapify_key
+GEMINI_API_KEY=your_gemini_key
+REDIS_URL=your_upstash_redis_url
 ```
 
-**Start the Backend:**
+Start the backend:
 ```bash
-node index.js
+npm start
 ```
 
-Backend runs at: `http://localhost:5000`
-
----
-
-### 2. Frontend Setup
+### 3. Frontend Setup
 ```bash
 cd frontend
 npm install
 ```
 
-**Start the Frontend:**
+Create a `.env` file in `/frontend`:
+```env
+VITE_API_URL=http://localhost:5000
+VITE_GEOAPIFY_API_KEY=your_geoapify_key
+```
+
+Start the frontend:
 ```bash
 npm run dev
 ```
 
-Frontend runs at: `http://localhost:5173`
+---
+
+## Practical Limits
+
+The C++ TSP solver is optimal for up to **~15 waypoints**. Beyond this, exponential complexity becomes a bottleneck.
 
 ---
 
-## How It Works
+## Security
 
-### Step 1: Location Input
-Users search and add up to **15 locations**.  
-The **first location** is automatically set as the starting point.
-
-### Step 2: Distance Matrix Generation
-Backend sends coordinates to **OSRM API**, which returns a matrix of real-world driving distances between all pairs of locations.
-
-### Step 3: TSP Optimization
-The distance matrix is passed to the **compiled C++ binary**.  
-The Held-Karp algorithm computes the shortest Hamiltonian cycle using **dynamic programming + bitmasking**.
-
-### Step 4: Route Visualization
-The optimized route is returned to the frontend, which displays:
-
-- **Optimized path** on the interactive map
-- **Step-by-step accumulated distances**
-- **Total trip distance**
-
----
-
-## Limitations & Trade-offs
-
-### Exponential Complexity
-TSP is **NP-hard**. Held-Karp runs in **O(n² · 2ⁿ)** time.
-
-**Practical limit:** ~15 locations  
-Beyond this, heuristic algorithms (genetic, simulated annealing) would be needed.
-
-### API Rate Limits
-OSRM public API has request limits.  
-For production use, consider:
-
-- Self-hosted OSRM instance
-- Caching distance matrices
-
-### Fixed Start Constraint
-The first location **must** be the start/end point.  
-General TSP (any start point) requires minor algorithm modification.
-
----
-
-## Why Loopless?
-
-**Demonstrates:**
-
-- Advanced **Data Structures & Algorithms** (DP, Bitmasking, TSP)
-- **System Design** (separating compute-heavy C++ from API orchestration)
-- **Real-world API integration** (OSRM, Nominatim)
-- **Performance optimization** (compiled binaries, algorithmic efficiency)
-
-**Use Cases:**
-
-- Delivery route optimization
-- Sales territory planning
-- Multi-destination travel planning
-- Educational TSP demonstration
-
----
-
-## Future Enhancements (Planned)
-
-- **Heuristic solvers** for 20+ locations (Genetic Algorithm, Ant Colony)
-- **Time windows** for delivery constraints
-- **Vehicle capacity** modeling
-- **Multi-vehicle routing** (VRP extension)
-- **Historical route caching**
-- **Mobile app** for on-the-go planning
-
----
-
-## Security Notes
-
-- No user authentication (demo application)
-- OSRM API calls are rate-limited
-- Input validation for coordinate arrays
-- Compiled C++ binary is sandboxed via child process
-
----
-
-## Live Demo
-
-🔗 **https://loopless.netlify.app/**
-
-Try optimizing routes with real locations and see the Held-Karp algorithm in action!
+- Rate-limited API endpoints
+- Input validation on all routes
+- External requests cached server-side
+- No client-side key exposure for optimization logic
 
 ---
 
 ## License
 
-MIT License — Free to use, modify, and distribute.
-
----
+MIT License — free to use, modify, and distribute.
