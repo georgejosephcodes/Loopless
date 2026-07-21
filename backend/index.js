@@ -4,6 +4,7 @@ const cors = require('cors');
 const axios = require('axios');
 const { exec } = require('child_process');
 const path = require('path');
+const crypto = require('crypto');
 const { createClient } = require('redis');
 const { rateLimit } = require('express-rate-limit');
 const { RedisStore } = require('rate-limit-redis');
@@ -18,7 +19,7 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEOAPIFY_API_KEY = process.env.GEOAPIFY_API_KEY;
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 const geminiModel = genAI.getGenerativeModel({
-  model: 'gemini-2.5-flash-lite',
+  model: 'gemini-flash-lite-latest',
 });
 
 const ORS_API_KEY = process.env.ORS_API_KEY;
@@ -55,6 +56,49 @@ const limiter = rateLimit({
 
 // Coordinate normalization
 const norm = (val) => parseFloat(val).toFixed(4);
+
+/**
+ * Shared distance helper (km) between two coordinates.
+ */
+function haversineDistance(lat1, lng1, lat2, lng2) {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+
+  return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+}
+
+/**
+ * Shared Geoapify geocoding helper. Returns { lat, lng, formatted } or null
+ * if the place could not be resolved. Reused by AI Autofill and AI Plan.
+ */
+async function geocodePlace(placeName) {
+  try {
+    const geoRes = await axios.get(
+      `https://api.geoapify.com/v1/geocode/search?text=${encodeURIComponent(
+        placeName
+      )}&limit=1&apiKey=${GEOAPIFY_API_KEY}`
+    );
+
+    const feature = geoRes.data.features?.[0];
+    if (!feature) return null;
+
+    return {
+      lat: feature.properties.lat,
+      lng: feature.properties.lon,
+      formatted: feature.properties.formatted || placeName,
+    };
+  } catch (geoErr) {
+    console.error(`Geoapify failed for ${placeName}:`, geoErr.message);
+    return null;
+  }
+}
 
 /**
  * 3. HYBRID ORS MATRIX LOGIC
@@ -230,19 +274,6 @@ async function getAIAutofillPlaces({ startPlace, lat, lng, radiusKm, maxStops, c
     if (cached) {
       return JSON.parse(cached);
     }
-    const haversineDistance = (lat1, lng1, lat2, lng2) => {
-      const R = 6371;
-      const dLat = ((lat2 - lat1) * Math.PI) / 180;
-      const dLng = ((lng2 - lng1) * Math.PI) / 180;
-
-      const a =
-        Math.sin(dLat / 2) ** 2 +
-        Math.cos((lat1 * Math.PI) / 180) *
-          Math.cos((lat2 * Math.PI) / 180) *
-          Math.sin(dLng / 2) ** 2;
-
-      return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
-    };
 
     const CATEGORY_MAP = {
       Mixed: 'popular places, attractions, food spots, and local highlights',
@@ -315,48 +346,35 @@ No explanation.
     const usedCoords = new Set();
 
     for (const placeName of suggestedPlaces) {
-      try {
-        const geoRes = await axios.get(
-          `https://api.geoapify.com/v1/geocode/search?text=${encodeURIComponent(
-            placeName
-          )}&limit=1&apiKey=${GEOAPIFY_API_KEY}`
-        );
+      const geocoded = await geocodePlace(placeName);
+      if (!geocoded) continue;
 
-        const feature = geoRes.data.features?.[0];
+      const { lat: placeLat, lng: placeLng, formatted } = geocoded;
 
-        if (!feature) continue;
+      // Radius filter
+      const distance = haversineDistance(
+        Number(lat),
+        Number(lng),
+        Number(placeLat),
+        Number(placeLng)
+      );
 
-        const placeLat = feature.properties.lat;
-        const placeLng = feature.properties.lon;
+      if (distance > radiusKm) continue;
 
-        // Radius filter
-        const distance = haversineDistance(
-          Number(lat),
-          Number(lng),
-          Number(placeLat),
-          Number(placeLng)
-        );
+      // Duplicate coordinate filter
+      const coordKey = `${Number(placeLat).toFixed(4)},${Number(placeLng).toFixed(4)}`;
 
-        if (distance > radiusKm) continue;
+      if (usedCoords.has(coordKey)) continue;
 
-        // Duplicate coordinate filter
-        const coordKey = `${Number(placeLat).toFixed(4)},${Number(placeLng).toFixed(4)}`;
+      usedCoords.add(coordKey);
 
-        if (usedCoords.has(coordKey)) continue;
+      verifiedPlaces.push({
+        name: formatted || placeName,
+        lat: placeLat,
+        lng: placeLng,
+      });
 
-        usedCoords.add(coordKey);
-
-        verifiedPlaces.push({
-          name: feature.properties.formatted || placeName,
-          lat: placeLat,
-          lng: placeLng,
-        });
-
-        if (verifiedPlaces.length >= maxStops) break;
-
-      } catch (geoErr) {
-        console.error(`Geoapify failed for ${placeName}:`, geoErr.message);
-      }
+      if (verifiedPlaces.length >= maxStops) break;
     }
     await redisClient.setEx(
       cacheKey,
@@ -409,7 +427,168 @@ app.post('/api/ai-autofill', async (req, res) => {
   res.json({ places });
 });
 /**
- * 6. START SERVER
+ * 6. NATURAL LANGUAGE TRIP PLANNER
+ */
+async function getAIPlanPlaces(userPrompt) {
+  try {
+    const cacheKey = `ai-plan:${crypto
+      .createHash('sha1')
+      .update(userPrompt.trim().toLowerCase())
+      .digest('hex')}`;
+
+    const cached = await redisClient.get(cacheKey);
+    if (cached) {
+      return JSON.parse(cached);
+    }
+
+  const prompt = `
+  You are an expert local travel planner.
+
+  The user described their trip like this:
+  """${userPrompt}"""
+
+  IMPORTANT VALIDATION:
+
+  If the user's prompt is meaningless, random text, too short, does not contain enough information to plan a trip, or does not specify any destination/city, return ONLY:
+
+  {
+    "error": "INVALID_PROMPT"
+  }
+
+  DO NOT guess.
+  DO NOT invent a city.
+  DO NOT infer a destination.
+
+  -------------------------
+
+  If the prompt is valid:
+
+  - Figure out the city/location the user means.
+  - Suggest real existing places matching the request.
+  - Order them logically.
+  - Pick a realistic radiusKm (between 3 and 60).
+  - Suggest between 3 and 10 places.
+
+  Rules:
+  - Suggest ONLY real places.
+  - No duplicates.
+  - No fake places.
+  - Prefer names that geocode correctly.
+
+  Return ONLY valid JSON:
+
+  {
+    "city": "string",
+    "radiusKm": number,
+    "places": [
+      {
+        "name": "string",
+        "reason": "string",
+        "order": number
+      }
+    ]
+  }
+
+  No markdown.
+  No explanations.
+  `;
+
+    const geminiResult = await geminiModel.generateContent(prompt);
+    const rawText = geminiResult.response
+      .text()
+      .replace(/```json/g, '')
+      .replace(/```/g, '')
+      .trim();
+
+    let plan;
+    try {
+      plan = JSON.parse(rawText);
+    } catch {
+      console.error('Gemini AI Plan JSON parse failed:', rawText);
+      return [];
+    }
+
+    if (!plan || !Array.isArray(plan.places) || !plan.places.length) {
+      return [];
+    }
+
+    const radiusKm = Number(plan.radiusKm) > 0 ? Number(plan.radiusKm) : 25;
+    const orderedSuggestions = [...plan.places].sort(
+      (a, b) => (a.order ?? 0) - (b.order ?? 0)
+    );
+
+    // Geocode the city first so we can sanity-check each place falls within radius.
+    const cityGeocoded = plan.city ? await geocodePlace(plan.city) : null;
+
+    const verifiedPlaces = [];
+    const usedCoords = new Set();
+
+    for (const suggestion of orderedSuggestions) {
+      if (!suggestion?.name) continue;
+
+      const geocoded = await geocodePlace(suggestion.name);
+      if (!geocoded) continue;
+
+      const { lat: placeLat, lng: placeLng, formatted } = geocoded;
+
+      if (cityGeocoded) {
+        const distance = haversineDistance(
+          Number(cityGeocoded.lat),
+          Number(cityGeocoded.lng),
+          Number(placeLat),
+          Number(placeLng)
+        );
+        if (distance > radiusKm) continue;
+      }
+
+      const coordKey = `${Number(placeLat).toFixed(4)},${Number(placeLng).toFixed(4)}`;
+      if (usedCoords.has(coordKey)) continue;
+      usedCoords.add(coordKey);
+
+      verifiedPlaces.push({
+        name: formatted || suggestion.name,
+        lat: placeLat,
+        lng: placeLng,
+        reason: suggestion.reason || '',
+      });
+
+      if (verifiedPlaces.length >= 15) break;
+    }
+
+    await redisClient.setEx(cacheKey, 604800, JSON.stringify(verifiedPlaces));
+
+    return verifiedPlaces;
+  } catch (err) {
+    console.error('AI Plan failed:', err.message);
+    return [];
+  }
+}
+
+/**
+ * 7. AI PLAN ENDPOINT (Natural Language Trip Planning)
+ */
+app.post('/api/ai-plan', async (req, res) => {
+  const { prompt } = req.body;
+
+  if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
+    return res.status(400).json({
+      error: 'A trip description is required.',
+    });
+  }
+
+  const places = await getAIPlanPlaces(prompt);
+
+  if (!places.length) {
+    return res.status(500).json({
+      error: 'Could not generate a plan for that prompt. Try rephrasing it.',
+    });
+  }
+
+  res.json({ places });
+});
+
+/**
+ * 8. START SERVER
  */
 app.listen(PORT, () => {
   console.log(`🚀 Optimizer online on port ${PORT}`);

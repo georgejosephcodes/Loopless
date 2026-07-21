@@ -5,7 +5,7 @@ import SearchBar from '../components/SearchBar';
 import BucketList from '../components/BucketList';
 import Map from '../components/Map';
 import { useTheme } from '../ThemeContext';
-import { Moon, Sun, MapPin, Locate, Sparkles, ChevronDown, Check } from 'lucide-react';
+import { Moon, Sun, MapPin, Locate, Sparkles, ChevronDown, Check, Wand2, ArrowLeft } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const CATEGORIES = [
@@ -28,11 +28,16 @@ const Home = ({ bucketList, setBucketList }) => {
   const [userLocation, setUserLocation] = useState(null);
   const [locating, setLocating] = useState(false);
   const [radiusKm, setRadiusKm] = useState(0);
+  const [showAIChooser, setShowAIChooser] = useState(false);
   const [showAIModal, setShowAIModal] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiRadius, setAiRadius] = useState(25);
   const [aiMaxStops, setAiMaxStops] = useState(5);
   const [aiCategory, setAiCategory] = useState('Mixed');
+  const [showNLModal, setShowNLModal] = useState(false);
+  const [nlPrompt, setNlPrompt] = useState('');
+  const [nlLoading, setNlLoading] = useState(false);
+  const [nlError, setNlError] = useState('');
   const [categoryOpen, setCategoryOpen] = useState(false);
   const categoryRef = useRef(null);
   const navigate = useNavigate();
@@ -209,6 +214,63 @@ const Home = ({ bucketList, setBucketList }) => {
     }
   };
 
+  const handleGenerateNLPlan = async () => {
+    if (!nlPrompt.trim()) {
+      setNlError('Please describe the trip you want to plan.');
+      return;
+    }
+    if (bucketList.length >= 15) {
+      setNlError('Bucket list is already full.');
+      return;
+    }
+    setNlLoading(true);
+    setNlError('');
+    try {
+      const res = await axios.post(
+        `${import.meta.env.VITE_API_URL}/api/ai-plan`,
+        { prompt: nlPrompt.trim() }
+      );
+      const planPlaces = res.data.places || [];
+      if (!planPlaces.length) {
+        setNlError('No valid places found for that trip. Try rephrasing your prompt.');
+        return;
+      }
+      const remainingSlots = 15 - bucketList.length;
+      const existingLocations = [...bucketList];
+      const newPlacesToAdd = [];
+      for (const place of planPlaces) {
+        if (newPlacesToAdd.length >= remainingSlots) break;
+        const isDuplicate =
+          existingLocations.some(
+            (loc) =>
+              Math.abs(Number(loc.lat) - Number(place.lat)) < 0.0001 &&
+              Math.abs(Number(loc.lng) - Number(place.lng)) < 0.0001
+          ) ||
+          newPlacesToAdd.some(
+            (loc) =>
+              Math.abs(Number(loc.lat) - Number(place.lat)) < 0.0001 &&
+              Math.abs(Number(loc.lng) - Number(place.lng)) < 0.0001
+          );
+        if (!isDuplicate) {
+          newPlacesToAdd.push({ ...place, id: crypto.randomUUID() });
+        }
+      }
+      if (newPlacesToAdd.length === 0) {
+        setNlError('All suggested places were already in your route.');
+        return;
+      }
+      setBucketList((prev) => [...prev, ...newPlacesToAdd]);
+      toast.success(`✨ Added ${newPlacesToAdd.length} new places`);
+      setShowNLModal(false);
+      setNlPrompt('');
+    } catch (err) {
+      console.error('Natural language plan failed:', err.response?.data || err.message);
+      setNlError(err.response?.data?.error || 'Failed to generate a plan. Please try again.');
+    } finally {
+      setNlLoading(false);
+    }
+  };
+
   const RADIUS_OPTIONS = [0, 5, 10, 25, 50, 100];
 
   return (
@@ -257,14 +319,7 @@ const Home = ({ bucketList, setBucketList }) => {
 
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '10px' }}>
             <button
-              onClick={() => {
-                if (bucketList.length === 0) {
-                  toast.error('Add your first place before using AI Autofill.');
-                  return;
-                }
-                setAiMaxStops(Math.max(1, Math.min(5, 15 - bucketList.length)));
-                setShowAIModal(true);
-              }}
+              onClick={() => setShowAIChooser(true)}
               title="AI Trip Planner"
               style={{
                 border: 'none',
@@ -462,6 +517,251 @@ const Home = ({ bucketList, setBucketList }) => {
           )}
         </div>
       </div>
+
+      {/* ── AI Chooser Modal ── */}
+      {showAIChooser && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0,0,0,0.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 5000,
+          }}
+          onClick={() => setShowAIChooser(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: '380px',
+              maxWidth: '92vw',
+              backgroundColor: t.navBg,
+              border: `1px solid ${t.navBorder}`,
+              borderRadius: '20px',
+              padding: '24px',
+              boxShadow: '0 20px 50px rgba(0,0,0,0.25)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '16px',
+            }}
+          >
+            <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 800, color: t.titleColor }}>
+              ✨ Plan with AI
+            </h2>
+            <p style={{ margin: 0, fontSize: '13px', color: t.dropdownSubText }}>
+              Choose how you'd like the AI to help plan your trip.
+            </p>
+
+            <button
+              onClick={() => {
+                setShowAIChooser(false);
+                if (bucketList.length === 0) {
+                  toast.error('Add your first place before using AI Autofill.');
+                  return;
+                }
+                setAiMaxStops(Math.max(1, Math.min(5, 15 - bucketList.length)));
+                setShowAIModal(true);
+              }}
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: '12px',
+                textAlign: 'left',
+                padding: '14px 16px',
+                borderRadius: '14px',
+                border: `1.5px solid ${t.navBorder}`,
+                backgroundColor: 'transparent',
+                cursor: 'pointer',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#8b5cf6'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.borderColor = t.navBorder; }}
+            >
+              <Sparkles size={20} color="#8b5cf6" style={{ flexShrink: 0, marginTop: '2px' }} />
+              <span>
+                <span style={{ display: 'block', fontWeight: 700, color: t.titleColor, fontSize: '14px' }}>
+                  AI Autofill
+                </span>
+                <span style={{ display: 'block', fontSize: '12px', color: t.dropdownSubText, marginTop: '2px' }}>
+                  Suggest more stops near your first bucket list place.
+                </span>
+              </span>
+            </button>
+
+            <button
+              onClick={() => {
+                setShowAIChooser(false);
+                setNlError('');
+                setShowNLModal(true);
+              }}
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: '12px',
+                textAlign: 'left',
+                padding: '14px 16px',
+                borderRadius: '14px',
+                border: `1.5px solid ${t.navBorder}`,
+                backgroundColor: 'transparent',
+                cursor: 'pointer',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#8b5cf6'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.borderColor = t.navBorder; }}
+            >
+              <Wand2 size={20} color="#8b5cf6" style={{ flexShrink: 0, marginTop: '2px' }} />
+              <span>
+                <span style={{ display: 'block', fontWeight: 700, color: t.titleColor, fontSize: '14px' }}>
+                  Natural Language Planner
+                </span>
+                <span style={{ display: 'block', fontSize: '12px', color: t.dropdownSubText, marginTop: '2px' }}>
+                  Describe your trip in plain words and let AI build the route.
+                </span>
+              </span>
+            </button>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setShowAIChooser(false)}
+                style={{
+                  padding: '10px 16px',
+                  borderRadius: '10px',
+                  border: `1px solid ${t.navBorder}`,
+                  background: 'transparent',
+                  color: t.titleColor,
+                  cursor: 'pointer',
+                  fontWeight: 700,
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Natural Language Planner Modal ── */}
+      {showNLModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0,0,0,0.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 5000,
+          }}
+          onClick={() => !nlLoading && setShowNLModal(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: '460px',
+              maxWidth: '92vw',
+              backgroundColor: t.navBg,
+              border: `1px solid ${t.navBorder}`,
+              borderRadius: '20px',
+              padding: '24px',
+              boxShadow: '0 20px 50px rgba(0,0,0,0.25)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '16px',
+            }}
+          >
+            <button
+              onClick={() => {
+                setShowNLModal(false);
+                setShowAIChooser(true);
+              }}
+              disabled={nlLoading}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                border: 'none',
+                background: 'transparent',
+                color: t.dropdownSubText,
+                fontSize: '12px',
+                fontWeight: 700,
+                cursor: nlLoading ? 'not-allowed' : 'pointer',
+                padding: 0,
+                alignSelf: 'flex-start',
+              }}
+            >
+              <ArrowLeft size={14} /> Back
+            </button>
+
+            <h2 style={{ margin: 0, fontSize: '22px', fontWeight: 800, color: t.titleColor }}>
+              ✨ Natural Language Planner
+            </h2>
+            <p style={{ margin: 0, fontSize: '13px', color: t.dropdownSubText }}>
+              Describe your trip in plain words. AI will find real places and add them to your Bucket List.
+            </p>
+
+            <textarea
+              value={nlPrompt}
+              onChange={(e) => setNlPrompt(e.target.value)}
+              disabled={nlLoading}
+              placeholder={'Example:\nPlan a one day trip in Mysore with temples, cafes and sunset spots.'}
+              rows={5}
+              style={{
+                width: '100%',
+                resize: 'vertical',
+                padding: '12px 14px',
+                borderRadius: '12px',
+                border: `1.5px solid ${t.navBorder}`,
+                backgroundColor: t.bg,
+                color: t.titleColor,
+                fontSize: '14px',
+                fontFamily: 'inherit',
+                outline: 'none',
+                boxSizing: 'border-box',
+              }}
+            />
+
+            {nlError && (
+              <p style={{ margin: 0, fontSize: '13px', color: '#ef4444', fontWeight: 600 }}>
+                {nlError}
+              </p>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button
+                onClick={() => setShowNLModal(false)}
+                disabled={nlLoading}
+                style={{
+                  padding: '10px 16px',
+                  borderRadius: '10px',
+                  border: `1px solid ${t.navBorder}`,
+                  background: 'transparent',
+                  color: t.titleColor,
+                  cursor: nlLoading ? 'not-allowed' : 'pointer',
+                  fontWeight: 700,
+                }}
+              >
+                Cancel
+              </button>
+
+              <button
+                onClick={handleGenerateNLPlan}
+                disabled={nlLoading}
+                style={{
+                  padding: '10px 16px',
+                  borderRadius: '10px',
+                  border: 'none',
+                  backgroundColor: '#8b5cf6',
+                  color: '#fff',
+                  cursor: nlLoading ? 'not-allowed' : 'pointer',
+                  fontWeight: 800,
+                }}
+              >
+                {nlLoading ? 'Generating...' : 'Generate Plan'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── AI Modal ── */}
       {showAIModal && (
