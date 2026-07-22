@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import Home from './pages/Home';
 import Result from './pages/Result';
+import SmartItinerary from './pages/SmartItinerary';
 import { ThemeProvider } from './ThemeContext';
 
 function App() {
@@ -48,6 +49,7 @@ function App() {
             }
           />
           <Route path="/result" element={<Result />} />
+          <Route path="/itinerary" element={<SmartItinerary />} />
         </Routes>
       </Router>
     </ThemeProvider>

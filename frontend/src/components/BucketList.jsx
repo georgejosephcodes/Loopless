@@ -101,7 +101,8 @@ function ListItem({ item, index, dark, onRemove, onDragStart, onDragOver, onDrop
   );
 }
 
-const BucketList = ({ list, onRemove, onOptimize, onReorder, dark, loading }) => {
+// NOTE: Added 'onClearAll' to the props
+const BucketList = ({ list, onRemove, onClearAll, onOptimize, onReorder, dark, loading }) => {
   const count = list.length;
   const isFull = count >= 15;
   const canOptimize = count >= 2 && !loading;
@@ -150,6 +151,7 @@ const BucketList = ({ list, onRemove, onOptimize, onReorder, dark, loading }) =>
     btnDisabledColor: dark ? '#334155' : '#cbd5e1',
     btnActiveBg: 'linear-gradient(135deg, #10b981, #059669)',
     btnActiveShadow: '0 4px 14px rgba(16,185,129,0.35)',
+    headerTrashColor: dark ? '#64748b' : '#94a3b8',
   };
 
   return (
@@ -169,17 +171,44 @@ const BucketList = ({ list, onRemove, onOptimize, onReorder, dark, loading }) =>
           }}>
             Route Stops
           </h3>
-          <span style={{
-            fontSize: '12px', fontWeight: 700,
-            color: t.countColor,
-            backgroundColor: isFull
-              ? 'rgba(239,68,68,0.1)'
-              : (dark ? '#1e293b' : '#f1f5f9'),
-            padding: '3px 9px', borderRadius: '20px',
-            transition: 'color 0.3s',
-          }}>
-            {count} / 15
-          </span>
+          
+          {/* New Container for Clear All and Count Badge */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {count > 0 && (
+              <button
+                onClick={onClearAll}
+                title="Clear all locations"
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  padding: '4px', borderRadius: '6px',
+                  color: t.headerTrashColor, display: 'flex', alignItems: 'center',
+                  transition: 'color 0.15s, background-color 0.15s',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.color = '#ef4444';
+                  e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.1)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.color = t.headerTrashColor;
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                }}
+              >
+                <Trash2 size={16} />
+              </button>
+            )}
+            
+            <span style={{
+              fontSize: '12px', fontWeight: 700,
+              color: t.countColor,
+              backgroundColor: isFull
+                ? 'rgba(239,68,68,0.1)'
+                : (dark ? '#1e293b' : '#f1f5f9'),
+              padding: '3px 9px', borderRadius: '20px',
+              transition: 'color 0.3s',
+            }}>
+              {count} / 15
+            </span>
+          </div>
         </div>
 
         <div style={{

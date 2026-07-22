@@ -1,31 +1,48 @@
 import React, { useMemo, useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Navigation, Sun, Moon, Flag } from 'lucide-react';
+import axios from 'axios';
+import { ArrowLeft, Navigation, Sun, Moon, Flag, Sparkles } from 'lucide-react';
 import { useTheme } from '../ThemeContext';
-import Map from '../components/Map';
+import RouteMap from '../components/Map';
 
 const PIN_COLORS = ['#10b981', '#3b82f6', '#8b5cf6', '#f59e0b', '#ef4444', '#06b6d4'];
+
+const VISIT_STYLES = {
+  quick: { label: 'Quick Visit', sublabel: '30 min', minutes: 30 },
+  normal: { label: 'Normal Visit', sublabel: '60 min', minutes: 60 },
+  leisurely: { label: 'Leisurely Visit', sublabel: '90 min', minutes: 90 },
+  custom: { label: 'Custom', sublabel: '15-240 min', minutes: null },
+};
 
 const Result = () => {
   const { state } = useLocation();
   const navigate = useNavigate();
   const { dark, toggle } = useTheme();
 
-  // Index of the stop the user has clicked in the list (-1 = none)
   const [selectedIdx, setSelectedIdx] = useState(null);
+
+  // ── Smart Itinerary state ──────────────────────────────────────────────
+  const [showItineraryModal, setShowItineraryModal] = useState(false);
+  const [itineraryLoading, setItineraryLoading] = useState(false);
+  const [itineraryError, setItineraryError] = useState('');
+  const [startTime, setStartTime] = useState('09:00');
+  const [endTime, setEndTime] = useState('18:00');
+  const [visitStyle, setVisitStyle] = useState('normal');
+  const [customMinutes, setCustomMinutes] = useState(60);
 
   useEffect(() => {
     if (!state || !Array.isArray(state.locations) || state.locations.length === 0) {
       navigate('/', { replace: true });
     }
-  },[state, navigate]);
+  }, [state, navigate]);
 
-const { locations, totalDistanceKm, matrix, routeGeometry } = useMemo(() => ({
-  locations: Array.isArray(state?.locations) ? state.locations : [],
-  totalDistanceKm: Number(state?.distance ?? 0),
-  matrix: Array.isArray(state?.matrix) ? state.matrix : [],
-  routeGeometry: Array.isArray(state?.routeGeometry) ? state.routeGeometry : [],
-}), [state]);
+  const { locations, totalDistanceKm, matrix, durationMatrix, routeGeometry } = useMemo(() => ({
+    locations: Array.isArray(state?.locations) ? state.locations : [],
+    totalDistanceKm: Number(state?.distance ?? 0),
+    matrix: Array.isArray(state?.matrix) ? state.matrix : [],
+    durationMatrix: Array.isArray(state?.durationMatrix) ? state.durationMatrix : [],
+    routeGeometry: Array.isArray(state?.routeGeometry) ? state.routeGeometry : [],
+  }), [state]);
 
   const pathWithDistances = useMemo(() => {
     if (locations.length === 0 || !matrix.length) return [];
@@ -77,23 +94,82 @@ const { locations, totalDistanceKm, matrix, routeGeometry } = useMemo(() => ({
     rowHoverBg: dark ? '#0f172a' : '#f8fafc',
     rowSelectedBg: dark ? '#162032' : '#eff6ff',
     rowSelectedBorder: dark ? '#1d4ed8' : '#bfdbfe',
+    inputBg: dark ? '#0f172a' : '#f8fafc',
+    dropdownSubText: dark ? '#64748b' : '#94a3b8',
+    errorColor: '#ef4444',
   };
 
   const handleRowClick = (i) => {
-    // The "return" row (last item) maps back to index 0 on the map
     const mapIndex = pathWithDistances[i].isReturn ? 0 : i;
     setSelectedIdx((prev) => (prev === mapIndex ? null : mapIndex));
+  };
+
+  const handleGenerateItinerary = async () => {
+    const stayMinutes = visitStyle === 'custom'
+      ? Number(customMinutes)
+      : VISIT_STYLES[visitStyle].minutes;
+
+    if (visitStyle === 'custom' && (!Number.isFinite(stayMinutes) || stayMinutes < 15 || stayMinutes > 240)) {
+      setItineraryError('Custom stay duration must be between 15 and 240 minutes.');
+      return;
+    }
+
+    if (!durationMatrix.length) {
+      setItineraryError('Travel time data is missing. Please re-run Optimize Route first.');
+      return;
+    }
+
+    setItineraryLoading(true);
+    setItineraryError('');
+    try {
+      const res = await axios.post(
+        `${import.meta.env.VITE_API_URL}/api/itinerary`,
+        {
+          optimizedRoute: locations,
+          durationMatrix,
+          startTime,
+          endTime,
+          stayMinutes,
+        }
+      );
+
+      const generated = res.data.itinerary || [];
+      if (!generated.length) {
+        setItineraryError('Could not generate an itinerary. Please try again.');
+        return;
+      }
+
+      setShowItineraryModal(false);
+      
+      // Navigate to SmartItinerary page with all required state
+      navigate('/itinerary', {
+        state: {
+          itinerary: generated,
+          locations,
+          durationMatrix,
+          matrix,
+          routeGeometry,
+          totalDistanceKm,
+          dark
+        }
+      });
+    } catch (err) {
+      console.error('Itinerary generation failed:', err.response?.data || err.message);
+      setItineraryError(err.response?.data?.error || 'Failed to generate itinerary. Please try again.');
+    } finally {
+      setItineraryLoading(false);
+    }
   };
 
   return (
     <div style={{
       display: 'flex', flexDirection: 'column',
-      height: '100vh', width: '100vw',
+      height: '100vh', width: '100%',
       backgroundColor: t.bg, transition: 'background-color 0.3s',
-      overflow: 'hidden',
+      overflow: 'hidden'
     }}>
 
-      {/* ── Nav bar ─────────────────────────────────────────────────────── */}
+      {/* ── Nav bar ── */}
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         padding: '12px 24px', flexShrink: 0,
@@ -102,18 +178,19 @@ const { locations, totalDistanceKm, matrix, routeGeometry } = useMemo(() => ({
         boxShadow: t.navShadow,
         transition: 'background-color 0.3s',
         gap: '16px',
+        position: 'sticky', top: 0, zIndex: 40,
       }}>
         <button
           onClick={() =>
-  navigate('/', {
-    state: {
-      restoredBucket: locations.map((loc) => ({
-      ...loc,
-      id: loc.id || crypto.randomUUID(),
-      })),
-    },
-  })
-}
+            navigate('/', {
+              state: {
+                restoredBucket: locations.map((loc) => ({
+                  ...loc,
+                  id: loc.id || crypto.randomUUID(),
+                })),
+              },
+            })
+          }
           style={{
             border: 'none', background: 'none', color: '#3b82f6',
             cursor: 'pointer', display: 'flex', alignItems: 'center',
@@ -160,24 +237,22 @@ const { locations, totalDistanceKm, matrix, routeGeometry } = useMemo(() => ({
         </button>
       </div>
 
-      {/* ── Body ────────────────────────────────────────────────────────── */}
+      {/* ── Body ── */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-
+        
         {/* Map */}
         <div style={{
           flex: 1, position: 'relative', overflow: 'hidden',
           margin: '16px 8px 16px 16px', borderRadius: '20px',
           border: `1px solid ${t.mapBorder}`,
         }}>
-          <Map
+          <RouteMap
             locations={locations}
             dark={dark}
             routePath={locations}
             roadPath={routeGeometry}
             selectedIndex={selectedIdx}
           />
-
-          {/* Deselect hint */}
           {selectedIdx !== null && (
             <div style={{
               position: 'absolute', bottom: '16px', left: '50%',
@@ -232,7 +307,29 @@ const { locations, totalDistanceKm, matrix, routeGeometry } = useMemo(() => ({
             </div>
           </div>
 
-          {/* Click hint */}
+          {/* Smart Itinerary trigger */}
+          <button
+            onClick={() => {
+              setItineraryError('');
+              setShowItineraryModal(true);
+            }}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+              padding: '11px 16px',
+              borderRadius: '12px',
+              border: 'none',
+              backgroundColor: '#8b5cf6',
+              color: '#fff',
+              fontWeight: 800, fontSize: '13.5px',
+              cursor: 'pointer',
+              marginBottom: '10px',
+              flexShrink: 0,
+              boxShadow: '0 4px 14px rgba(139,92,246,0.35)',
+            }}
+          >
+            <Sparkles size={16} /> Generate Smart Itinerary
+          </button>
+
           <div style={{
             fontSize: '11px', fontWeight: 500,
             color: dark ? '#475569' : '#94a3b8',
@@ -241,7 +338,6 @@ const { locations, totalDistanceKm, matrix, routeGeometry } = useMemo(() => ({
             Click a stop to highlight it on the map
           </div>
 
-          {/* Route steps */}
           <div style={{
             flex: 1, overflowY: 'auto',
             backgroundColor: t.cardBg,
@@ -252,22 +348,14 @@ const { locations, totalDistanceKm, matrix, routeGeometry } = useMemo(() => ({
           }}>
             {pathWithDistances.map((loc, i) => {
               const isLast = i === pathWithDistances.length - 1;
-              // The "return" row visually highlights pin 0 on the map
               const mapIndex = loc.isReturn ? 0 : i;
               const isSelected = selectedIdx === mapIndex;
 
-              const pinColor = loc.isReturn
-                ? '#f97316'
-                : loc.isStart
-                  ? '#10b981'
-                  : PIN_COLORS[i % PIN_COLORS.length];
-
-              const segDist = i > 0
-                ? (() => {
+              const pinColor = loc.isReturn ? '#f97316' : loc.isStart ? '#10b981' : PIN_COLORS[i % PIN_COLORS.length];
+              const segDist = i > 0 ? (() => {
                     const d = parseFloat(loc.accumulated) - parseFloat(pathWithDistances[i - 1].accumulated);
                     return d > 0 ? `+${d.toFixed(2)} km` : null;
-                  })()
-                : null;
+                  })() : null;
 
               return (
                 <div
@@ -278,21 +366,13 @@ const { locations, totalDistanceKm, matrix, routeGeometry } = useMemo(() => ({
                     padding: '12px 16px',
                     borderBottom: isLast ? 'none' : `1px solid ${t.rowBorder}`,
                     cursor: 'pointer',
-                    // Highlight selected row
                     backgroundColor: isSelected ? t.rowSelectedBg : 'transparent',
-                    borderLeft: isSelected
-                      ? `3px solid ${pinColor}`
-                      : '3px solid transparent',
+                    borderLeft: isSelected ? `3px solid ${pinColor}` : '3px solid transparent',
                     transition: 'background-color 0.15s, border-left-color 0.15s',
                   }}
-                  onMouseEnter={(e) => {
-                    if (!isSelected) e.currentTarget.style.backgroundColor = t.rowHoverBg;
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent';
-                  }}
+                  onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.backgroundColor = t.rowHoverBg; }}
+                  onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent'; }}
                 >
-                  {/* Pin + connector */}
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginRight: '13px', flexShrink: 0 }}>
                     <div style={{
                       width: '28px', height: '28px',
@@ -300,9 +380,7 @@ const { locations, totalDistanceKm, matrix, routeGeometry } = useMemo(() => ({
                       borderRadius: '50%',
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                       color: 'white', fontWeight: 800, fontSize: '11px',
-                      boxShadow: isSelected
-                        ? `0 0 0 3px ${pinColor}44, 0 2px 8px ${pinColor}55`
-                        : `0 2px 8px ${pinColor}44`,
+                      boxShadow: isSelected ? `0 0 0 3px ${pinColor}44, 0 2px 8px ${pinColor}55` : `0 2px 8px ${pinColor}44`,
                       transition: 'box-shadow 0.2s',
                       flexShrink: 0,
                     }}>
@@ -316,14 +394,10 @@ const { locations, totalDistanceKm, matrix, routeGeometry } = useMemo(() => ({
                     )}
                   </div>
 
-                  {/* Content */}
                   <div style={{ flex: 1, overflow: 'hidden', paddingTop: '2px' }}>
                     <div style={{
-                      fontWeight: isSelected ? 700 : 600,
-                      fontSize: '13.5px',
-                      color: isSelected
-                        ? (dark ? '#f1f5f9' : '#1e293b')
-                        : t.nameColor,
+                      fontWeight: isSelected ? 700 : 600, fontSize: '13.5px',
+                      color: isSelected ? (dark ? '#f1f5f9' : '#1e293b') : t.nameColor,
                       whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                       transition: 'color 0.15s, font-weight 0.15s',
                     }}>
@@ -346,7 +420,6 @@ const { locations, totalDistanceKm, matrix, routeGeometry } = useMemo(() => ({
                     </div>
                   </div>
 
-                  {/* Accumulated distance */}
                   <div style={{ textAlign: 'right', flexShrink: 0, paddingTop: '2px', marginLeft: '8px' }}>
                     <div style={{ fontSize: '13px', fontWeight: 600, color: t.accumColor }}>
                       {loc.accumulated} km
@@ -361,6 +434,106 @@ const { locations, totalDistanceKm, matrix, routeGeometry } = useMemo(() => ({
           </div>
         </div>
       </div>
+
+      {/* ── Smart Itinerary Modal ── */}
+      {showItineraryModal && (
+        <div
+          style={{
+            position: 'fixed', inset: 0,
+            backgroundColor: 'rgba(0,0,0,0.45)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 5000,
+          }}
+          onClick={() => !itineraryLoading && setShowItineraryModal(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: '440px', maxWidth: '92vw', maxHeight: '88vh', overflowY: 'auto',
+              backgroundColor: t.navBg, border: `1px solid ${t.navBorder}`,
+              borderRadius: '20px', padding: '24px', boxShadow: '0 20px 50px rgba(0,0,0,0.25)',
+              display: 'flex', flexDirection: 'column', gap: '18px',
+            }}
+          >
+            <h2 style={{ margin: 0, fontSize: '22px', fontWeight: 800, color: t.titleColor }}>
+              ✨ Generate Smart Itinerary
+            </h2>
+            <p style={{ margin: 0, fontSize: '13px', color: t.dropdownSubText }}>
+              We'll schedule your optimized route stop-by-stop using real travel times, splitting into extra days automatically if needed.
+            </p>
+
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <div style={{ flex: 1 }}>
+                <p style={{ margin: '0 0 8px', fontWeight: 700, fontSize: '13px', color: t.titleColor }}>Trip Start Time</p>
+                <input
+                  type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} disabled={itineraryLoading}
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1.5px solid ${t.navBorder}`, backgroundColor: t.inputBg, color: t.titleColor, fontSize: '14px', boxSizing: 'border-box' }}
+                />
+              </div>
+              <div style={{ flex: 1 }}>
+                <p style={{ margin: '0 0 8px', fontWeight: 700, fontSize: '13px', color: t.titleColor }}>Trip End Time</p>
+                <input
+                  type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} disabled={itineraryLoading}
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1.5px solid ${t.navBorder}`, backgroundColor: t.inputBg, color: t.titleColor, fontSize: '14px', boxSizing: 'border-box' }}
+                />
+              </div>
+            </div>
+
+            <div>
+              <p style={{ margin: '0 0 10px', fontWeight: 700, fontSize: '13px', color: t.titleColor }}>Visit Style</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {Object.entries(VISIT_STYLES).map(([key, cfg]) => {
+                  const isSelected = visitStyle === key;
+                  return (
+                    <button
+                      key={key} onClick={() => setVisitStyle(key)} disabled={itineraryLoading}
+                      style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '11px 14px', borderRadius: '12px',
+                        border: `1.5px solid ${isSelected ? '#8b5cf6' : t.navBorder}`,
+                        backgroundColor: isSelected ? (dark ? 'rgba(139,92,246,0.15)' : '#f5f3ff') : 'transparent',
+                        cursor: itineraryLoading ? 'not-allowed' : 'pointer', textAlign: 'left',
+                      }}
+                    >
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <span style={{ width: '16px', height: '16px', borderRadius: '50%', border: `2px solid ${isSelected ? '#8b5cf6' : t.navBorder}`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                          {isSelected && <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#8b5cf6' }} />}
+                        </span>
+                        <span style={{ fontWeight: 700, fontSize: '13.5px', color: t.titleColor }}>{cfg.label}</span>
+                      </span>
+                      <span style={{ fontSize: '12px', fontWeight: 600, color: t.dropdownSubText }}>{cfg.sublabel}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {visitStyle === 'custom' && (
+                <div style={{ marginTop: '12px' }}>
+                  <input type="range" min="15" max="240" step="5" value={customMinutes} onChange={(e) => setCustomMinutes(Number(e.target.value))} disabled={itineraryLoading} style={{ width: '100%' }} />
+                  <p style={{ margin: '6px 0 0', color: '#8b5cf6', fontWeight: 700, fontSize: '13px' }}>{customMinutes} minutes per stop</p>
+                </div>
+              )}
+            </div>
+
+            {itineraryError && (
+              <p style={{ margin: 0, fontSize: '13px', color: t.errorColor, fontWeight: 600 }}>{itineraryError}</p>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button
+                onClick={() => setShowItineraryModal(false)} disabled={itineraryLoading}
+                style={{ padding: '10px 16px', borderRadius: '10px', border: `1px solid ${t.navBorder}`, background: 'transparent', color: t.titleColor, cursor: itineraryLoading ? 'not-allowed' : 'pointer', fontWeight: 700 }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleGenerateItinerary} disabled={itineraryLoading}
+                style={{ padding: '10px 16px', borderRadius: '10px', border: 'none', backgroundColor: '#8b5cf6', color: '#fff', cursor: itineraryLoading ? 'not-allowed' : 'pointer', fontWeight: 800 }}
+              >
+                {itineraryLoading ? 'Generating...' : 'Generate'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

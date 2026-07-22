@@ -19,7 +19,7 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEOAPIFY_API_KEY = process.env.GEOAPIFY_API_KEY;
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 const geminiModel = genAI.getGenerativeModel({
-  model: 'gemini-flash-lite-latest',
+  model: 'gemini-flash-latest',
 });
 
 const ORS_API_KEY = process.env.ORS_API_KEY;
@@ -101,34 +101,42 @@ async function geocodePlace(placeName) {
 }
 
 /**
- * 3. HYBRID ORS MATRIX LOGIC
+ * 3. HYBRID ORS MATRIX LOGIC (distance + duration)
  */
-async function getORSMatrix(locations) {
-  if (!ORS_API_KEY) return null;
+async function getORSMatrices(locations) {
+  if (!ORS_API_KEY) return { distanceMatrix: null, durationMatrix: null };
 
   const n = locations.length;
-  const matrix = Array.from({ length: n }, () => Array(n).fill(null));
+  const distanceMatrix = Array.from({ length: n }, () => Array(n).fill(null));
+  const durationMatrix = Array.from({ length: n }, () => Array(n).fill(null));
   let allCached = true;
 
   for (let i = 0; i < n; i++) {
     for (let j = 0; j < n; j++) {
       if (i === j) {
-        matrix[i][j] = 0;
+        distanceMatrix[i][j] = 0;
+        durationMatrix[i][j] = 0;
         continue;
       }
 
-      const key = `dist:${norm(locations[i].lat)},${norm(locations[i].lng)}:${norm(locations[j].lat)},${norm(locations[j].lng)}`;
-      const cached = await redisClient.get(key);
+      const distKey = `dist:${norm(locations[i].lat)},${norm(locations[i].lng)}:${norm(locations[j].lat)},${norm(locations[j].lng)}`;
+      const durKey = `dur:${norm(locations[i].lat)},${norm(locations[i].lng)}:${norm(locations[j].lat)},${norm(locations[j].lng)}`;
 
-      if (cached) {
-        matrix[i][j] = parseInt(cached);
+      const [cachedDist, cachedDur] = await Promise.all([
+        redisClient.get(distKey),
+        redisClient.get(durKey),
+      ]);
+
+      if (cachedDist != null && cachedDur != null) {
+        distanceMatrix[i][j] = parseInt(cachedDist);
+        durationMatrix[i][j] = parseInt(cachedDur);
       } else {
         allCached = false;
       }
     }
   }
 
-  if (allCached) return matrix;
+  if (allCached) return { distanceMatrix, durationMatrix };
 
   try {
     const orsLocations = locations.map(loc => [loc.lng, loc.lat]);
@@ -137,7 +145,7 @@ async function getORSMatrix(locations) {
       'https://api.openrouteservice.org/v2/matrix/driving-car',
       {
         locations: orsLocations,
-        metrics: ['distance'],
+        metrics: ['distance', 'duration'],
         units: 'm'
       },
       {
@@ -149,24 +157,30 @@ async function getORSMatrix(locations) {
     );
 
     const distances = res.data.distances;
+    const durations = res.data.durations;
 
     for (let i = 0; i < n; i++) {
       for (let j = 0; j < n; j++) {
-        const val = distances[i][j] !== null ? Math.round(distances[i][j]) : 9999999;
-        matrix[i][j] = val;
+        const distVal = distances?.[i]?.[j] != null ? Math.round(distances[i][j]) : 9999999;
+        const durVal = durations?.[i]?.[j] != null ? Math.round(durations[i][j]) : 9999999;
+
+        distanceMatrix[i][j] = distVal;
+        durationMatrix[i][j] = durVal;
 
         if (i !== j) {
-          const key = `dist:${norm(locations[i].lat)},${norm(locations[i].lng)}:${norm(locations[j].lat)},${norm(locations[j].lng)}`;
-          await redisClient.setEx(key, 2592000, val.toString());
+          const distKey = `dist:${norm(locations[i].lat)},${norm(locations[i].lng)}:${norm(locations[j].lat)},${norm(locations[j].lng)}`;
+          const durKey = `dur:${norm(locations[i].lat)},${norm(locations[i].lng)}:${norm(locations[j].lat)},${norm(locations[j].lng)}`;
+          await redisClient.setEx(distKey, 2592000, distVal.toString());
+          await redisClient.setEx(durKey, 2592000, durVal.toString());
         }
       }
     }
 
-    return matrix;
+    return { distanceMatrix, durationMatrix };
 
   } catch (e) {
     console.error("ORS Matrix Fetch Failed:", e.response?.data || e.message);
-    return null;
+    return { distanceMatrix: null, durationMatrix: null };
   }
 }
 
@@ -212,7 +226,7 @@ app.post('/api/optimize', limiter, async (req, res) => {
     return res.status(400).send('Minimum 2 locations required.');
   }
 
-  const matrix = await getORSMatrix(locations);
+  const { distanceMatrix: matrix, durationMatrix } = await getORSMatrices(locations);
 
   if (!matrix) {
     return res.status(500).json({ error: 'Failed to retrieve distance data.' });
@@ -257,6 +271,7 @@ app.post('/api/optimize', limiter, async (req, res) => {
       path: optimizedPath,
       distance: (Number(lines[0]) / 1000).toFixed(2),
       matrix,
+      durationMatrix,
       routeGeometry,
     });
   });
@@ -391,7 +406,7 @@ No explanation.
 }
 
 /**
- * 5. AI AUTOFILL ENDPOINT
+ * 6. AI AUTOFILL ENDPOINT
  */
 app.post('/api/ai-autofill', async (req, res) => {
   const {
@@ -427,7 +442,7 @@ app.post('/api/ai-autofill', async (req, res) => {
   res.json({ places });
 });
 /**
- * 6. NATURAL LANGUAGE TRIP PLANNER
+ * 7. NATURAL LANGUAGE TRIP PLANNER
  */
 async function getAIPlanPlaces(userPrompt) {
   try {
@@ -441,57 +456,112 @@ async function getAIPlanPlaces(userPrompt) {
       return JSON.parse(cached);
     }
 
-  const prompt = `
-  You are an expert local travel planner.
+const prompt = `
+You are an expert travel planning assistant.
 
-  The user described their trip like this:
-  """${userPrompt}"""
+The user request is:
 
-  IMPORTANT VALIDATION:
+"${userPrompt}"
 
-  If the user's prompt is meaningless, random text, too short, does not contain enough information to plan a trip, or does not specify any destination/city, return ONLY:
+Your task is to understand the user's travel request and generate a structured travel plan.
 
-  {
-    "error": "INVALID_PROMPT"
-  }
+Follow these rules carefully.
 
-  DO NOT guess.
-  DO NOT invent a city.
-  DO NOT infer a destination.
+--------------------------------------------------
+1. Understand the user's intent
+--------------------------------------------------
 
-  -------------------------
+Extract:
 
-  If the prompt is valid:
+- Destination city or town
+- Nearby landmark or reference location (if mentioned)
+- Trip duration (if mentioned)
+- Radius (if mentioned)
+- Interests (tourist places, cafes, shopping, nature, temples, etc.)
 
-  - Figure out the city/location the user means.
-  - Suggest real existing places matching the request.
-  - Order them logically.
-  - Pick a realistic radiusKm (between 3 and 60).
-  - Suggest between 3 and 10 places.
+If the user specifies a radius (for example "within 25 km"), preserve that exact value.
 
-  Rules:
-  - Suggest ONLY real places.
-  - No duplicates.
-  - No fake places.
-  - Prefer names that geocode correctly.
+If the user specifies a nearby landmark (airport, railway station, mall, fort, beach, etc.), use that as the reference location.
 
-  Return ONLY valid JSON:
+If the user does NOT specify a radius, choose an appropriate one between 5 and 50 km.
 
-  {
-    "city": "string",
-    "radiusKm": number,
-    "places": [
-      {
-        "name": "string",
-        "reason": "string",
-        "order": number
-      }
-    ]
-  }
+--------------------------------------------------
+2. Suggest places
+--------------------------------------------------
 
-  No markdown.
-  No explanations.
-  `;
+Suggest ONLY real places.
+
+Every place must:
+
+- exist in real life
+- be inside the requested radius
+- match the user's interests
+- belong to the same destination
+
+Do NOT suggest places from different cities.
+
+Prefer famous places that geocode reliably.
+
+Include city names whenever necessary.
+
+Example:
+
+GOOD
+"Mattancherry Palace, Kochi"
+
+BAD
+"Mattancherry Palace"
+
+--------------------------------------------------
+3. Ordering
+--------------------------------------------------
+
+Return places in a logical visiting order.
+
+Nearby places should be grouped together.
+
+Avoid unnecessary travel.
+
+--------------------------------------------------
+4. Validation
+--------------------------------------------------
+
+If the prompt is meaningless, random text, or you cannot determine a destination, return ONLY:
+
+{
+  "error":"INVALID_PROMPT"
+}
+
+Do NOT guess.
+
+--------------------------------------------------
+5. Output
+--------------------------------------------------
+
+Return ONLY valid JSON.
+
+{
+  "city":"string",
+
+  "referenceLocation":"string",
+
+  "radiusKm":25,
+
+  "places":[
+    {
+      "name":"string",
+      "reason":"Why this matches the user's request",
+      "order":1
+    }
+  ]
+}
+
+No markdown.
+
+No explanation.
+
+No additional text.
+`;
 
     const geminiResult = await geminiModel.generateContent(prompt);
     const rawText = geminiResult.response
@@ -518,7 +588,9 @@ async function getAIPlanPlaces(userPrompt) {
     );
 
     // Geocode the city first so we can sanity-check each place falls within radius.
-    const cityGeocoded = plan.city ? await geocodePlace(plan.city) : null;
+    const center = await geocodePlace(
+        plan.referenceLocation || plan.city
+    );
 
     const verifiedPlaces = [];
     const usedCoords = new Set();
@@ -531,14 +603,15 @@ async function getAIPlanPlaces(userPrompt) {
 
       const { lat: placeLat, lng: placeLng, formatted } = geocoded;
 
-      if (cityGeocoded) {
-        const distance = haversineDistance(
-          Number(cityGeocoded.lat),
-          Number(cityGeocoded.lng),
-          Number(placeLat),
-          Number(placeLng)
-        );
-        if (distance > radiusKm) continue;
+      if (center) {
+          const distance = haversineDistance(
+              Number(center.lat),
+              Number(center.lng),
+              Number(placeLat),
+              Number(placeLng)
+          );
+
+          if (distance > radiusKm) continue;
       }
 
       const coordKey = `${Number(placeLat).toFixed(4)},${Number(placeLng).toFixed(4)}`;
@@ -565,7 +638,7 @@ async function getAIPlanPlaces(userPrompt) {
 }
 
 /**
- * 7. AI PLAN ENDPOINT (Natural Language Trip Planning)
+ * 8. AI PLAN ENDPOINT (Natural Language Trip Planning)
  */
 app.post('/api/ai-plan', async (req, res) => {
   const { prompt } = req.body;
@@ -588,7 +661,151 @@ app.post('/api/ai-plan', async (req, res) => {
 });
 
 /**
- * 8. START SERVER
+ * 9. SMART ITINERARY ENGINE
+ *
+ * Kept as small, pure, side-effect-free functions so future features
+ * (opening hours, meal breaks, weather-awareness, traffic-aware routing,
+ * sunrise/sunset scheduling, AI time optimization, etc.) can hook into the
+ * scheduling loop later without touching Express routing or the time math.
+ */
+
+// "HH:MM" -> minutes since midnight, or null if invalid
+function timeStringToMinutes(str) {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(String(str || '').trim());
+  if (!match) return null;
+
+  const h = Number(match[1]);
+  const m = Number(match[2]);
+  if (h < 0 || h > 23 || m < 0 || m > 59) return null;
+
+  return h * 60 + m;
+}
+
+// minutes since midnight -> "HH:MM"
+function minutesToTimeString(totalMinutes) {
+  const clamped = ((Math.round(totalMinutes) % 1440) + 1440) % 1440;
+  const h = Math.floor(clamped / 60);
+  const m = clamped % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+/**
+ * Pure scheduling engine.
+ * - Never reorders `optimizedRoute`; it is scheduled exactly as received.
+ * - Never estimates travel time; it only reads `durationMatrix` (ORS seconds).
+ * - Automatically rolls remaining stops onto the next day whenever a stop
+ *   would arrive (or finish) after `endMinutes`.
+ *
+ * Extension point: additional pre/post-stop hooks (e.g. lunch break
+ * insertion, opening-hours checks) can be added inside the loop below
+ * without changing its signature or the day-rollover logic.
+ */
+function scheduleItinerary({ optimizedRoute, durationMatrix, startMinutes, endMinutes, stayMinutes }) {
+  const itinerary = [];
+  let day = 1;
+  let currentTime = startMinutes;
+
+  for (let i = 0; i < optimizedRoute.length; i++) {
+    const stop = optimizedRoute[i];
+    const prevStop = i > 0 ? optimizedRoute[i - 1] : null;
+
+    let travelMinutes = 0;
+    if (prevStop) {
+      const seconds = durationMatrix?.[prevStop.originalIdx]?.[stop.originalIdx];
+      travelMinutes = seconds != null ? Math.round(seconds / 60) : 0;
+    }
+
+    let arrival = currentTime + travelMinutes;
+
+    // Day rollover: this stop can't be completed before Trip End Time.
+    if (prevStop && arrival + stayMinutes > endMinutes) {
+      day += 1;
+      currentTime = startMinutes;
+      travelMinutes = 0; // travel across an overnight gap isn't meaningful without hotel/start data
+      arrival = currentTime;
+    }
+
+    const departure = arrival + stayMinutes;
+
+    itinerary.push({
+      day,
+      place: stop.name,
+      arrival: minutesToTimeString(arrival),
+      departure: minutesToTimeString(departure),
+      stayMinutes,
+      travelMinutes,
+    });
+
+    currentTime = departure;
+  }
+
+  return itinerary;
+}
+
+/**
+ * 10. SMART ITINERARY ENDPOINT
+ */
+app.post('/api/itinerary', (req, res) => {
+  const {
+    optimizedRoute,
+    durationMatrix,
+    startTime = '09:00',
+    endTime = '18:00',
+    stayMinutes = 60,
+  } = req.body;
+
+  if (!Array.isArray(optimizedRoute) || optimizedRoute.length === 0) {
+    return res.status(400).json({
+      error: 'An optimized route with at least one stop is required.',
+    });
+  }
+
+  if (!Array.isArray(durationMatrix) || !durationMatrix.length) {
+    return res.status(400).json({
+      error: 'A duration matrix is required. Please re-run Optimize Route first.',
+    });
+  }
+
+  const startMinutes = timeStringToMinutes(startTime);
+  const endMinutes = timeStringToMinutes(endTime);
+
+  if (startMinutes == null || endMinutes == null) {
+    return res.status(400).json({
+      error: 'Trip start and end time must be in HH:MM format.',
+    });
+  }
+
+  if (endMinutes <= startMinutes) {
+    return res.status(400).json({
+      error: 'Trip end time must be after trip start time.',
+    });
+  }
+
+  const stay = Number(stayMinutes);
+  if (!Number.isFinite(stay) || stay < 5 || stay > endMinutes - startMinutes) {
+    return res.status(400).json({
+      error: 'Stay duration must be a positive number that fits within a single day of your trip window.',
+    });
+  }
+
+  try {
+    const itinerary = scheduleItinerary({
+      optimizedRoute,
+      durationMatrix,
+      startMinutes,
+      endMinutes,
+      stayMinutes: stay,
+    });
+
+    res.json({ itinerary });
+  } catch (err) {
+    console.error('Itinerary generation failed:', err.message);
+    res.status(500).json({ error: 'Could not generate itinerary.' });
+  }
+});
+
+/**
+ * 11. START SERVER
  */
 app.listen(PORT, () => {
   console.log(`🚀 Optimizer online on port ${PORT}`);

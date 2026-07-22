@@ -140,6 +140,7 @@ const Home = ({ bucketList, setBucketList }) => {
           locations: res.data.path,
           distance: res.data.distance,
           matrix: res.data.matrix,
+          durationMatrix: res.data.durationMatrix,
           routeGeometry: res.data.routeGeometry,
         },
       });
@@ -998,14 +999,15 @@ const Home = ({ bucketList, setBucketList }) => {
         display: 'flex', flexDirection: 'column',
         transition: 'background-color 0.3s',
       }}>
-        <BucketList
-          list={bucketList}
-          loading={loading}
-          dark={dark}
-          onRemove={handleRemoveLocation}
-          onOptimize={handleOptimize}
-          onReorder={(newList) => setBucketList(newList)}
-        />
+      <BucketList
+        list={bucketList}
+        loading={loading}
+        dark={dark}
+        onRemove={handleRemoveLocation}
+        onClearAll={() => setBucketList([])} 
+        onOptimize={handleOptimize}
+        onReorder={(newList) => setBucketList(newList)}
+      />
       </div>
     </div>
   );
