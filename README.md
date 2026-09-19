@@ -1,65 +1,10 @@
-<div align="center">
-
-# 🗺️ Loopless
+# Loopless
 
 **AI-Powered Trip Planning × Real-World Route Optimization**
 
 *Collapse destination discovery, geospatial validation, road-network routing, and exact TSP optimization into a single end-to-end pipeline.*
 
-<br/>
-
-[![Live Demo](https://img.shields.io/badge/🚀%20Live%20Demo-loopless.netlify.app-4f46e5?style=for-the-badge)](https://loopless.netlify.app/)&nbsp;
-[![GitHub](https://img.shields.io/badge/💻%20GitHub-georgejosephcodes%2FLoopless-24292e?style=for-the-badge&logo=github)](https://github.com/georgejosephcodes/Loopless)
-
-<br/>
-
-![React](https://img.shields.io/badge/React-19-61dafb?style=flat-square&logo=react&logoColor=black)
-![Vite](https://img.shields.io/badge/Vite-7-646cff?style=flat-square&logo=vite&logoColor=white)
-![Node.js](https://img.shields.io/badge/Node.js-20-339933?style=flat-square&logo=nodedotjs&logoColor=white)
-![Express](https://img.shields.io/badge/Express-5-000000?style=flat-square&logo=express&logoColor=white)
-![C++](https://img.shields.io/badge/C%2B%2B-TSP%20Solver-00599C?style=flat-square&logo=cplusplus&logoColor=white)
-![Redis](https://img.shields.io/badge/Redis-Upstash-dc382d?style=flat-square&logo=redis&logoColor=white)
-![Gemini](https://img.shields.io/badge/Gemini-flash--latest-8e44ad?style=flat-square&logo=google&logoColor=white)
-![Docker](https://img.shields.io/badge/Docker-Compose-2496ed?style=flat-square&logo=docker&logoColor=white)
-
-</div>
-
----
-
-## Table of Contents
-
-| # | Section |
-|---|---|
-| 1 | [The Problem](#the-problem) |
-| 2 | [The Loopless Approach](#the-loopless-approach) |
-| 3 | [Why Loopless?](#why-loopless) |
-| 4 | [See It in Action](#see-it-in-action) |
-| 5 | [Key Features — In Depth](#key-features--in-depth) |
-| 6 | [System Architecture](#system-architecture) |
-| 7 | [Runtime & Deployment Architecture](#runtime--deployment-architecture) |
-| 8 | [Core Workflows](#core-workflows) |
-| 9 | [AI Validation Architecture](#ai-validation-architecture) |
-| 10 | [The Algorithm — TSP with Bitmask DP](#the-algorithm--tsp-with-bitmask-dp) |
-| 11 | [C++ Solver Architecture](#c-solver-architecture) |
-| 12 | [Why This Hybrid Architecture?](#why-this-hybrid-architecture) |
-| 13 | [Real Road Distance Engine](#real-road-distance-engine) |
-| 14 | [Redis Architecture](#redis-architecture) |
-| 15 | [Rate Limiting](#rate-limiting) |
-| 16 | [API Reference](#api-reference) |
-| 17 | [Runtime Data Models](#runtime-data-models) |
-| 18 | [Request / Response Data Flow](#request--response-data-flow) |
-| 19 | [Engineering Tradeoffs](#engineering-tradeoffs) |
-| 20 | [Failure Modes](#failure-modes) |
-| 21 | [Security](#security) |
-| 22 | [Performance Characteristics](#performance-characteristics) |
-| 23 | [Complexity Reference](#complexity-reference) |
-| 24 | [Limitations](#limitations) |
-| 25 | [Future Architecture](#future-architecture) |
-| 26 | [Project Structure](#project-structure) |
-| 27 | [Local Development](#local-development) |
-| 28 | [Environment Variables](#environment-variables) |
-| 29 | [Contributing](#contributing) |
-| 30 | [License](#license) |
+[Live Demo](https://loopless.netlify.app/) — [GitHub](https://github.com/georgejosephcodes/Loopless)
 
 ---
 
@@ -234,7 +179,7 @@ No screenshots are committed to the repository. The following describes the actu
 
 ## Key Features — In Depth
 
-### 🤖 AI Destination Discovery
+### AI Destination Discovery
 
 **Autofill mode** (`POST /api/ai-autofill`): The backend constructs a structured prompt using `CATEGORY_MAP`, a constant map of 19 category strings to descriptive prompts (e.g. `Tourist → "major tourist attractions, landmarks, must-visit places"`). The prompt enforces rules: only real existing places, within the specified radius, no duplicates, no fake places, prefer well-known names for geocoding reliability. Gemini returns a raw JSON array `["Place A", "Place B", ...]`. The response text is stripped of markdown artifacts (```` ```json ``` ````) before parsing.
 
@@ -242,7 +187,7 @@ No screenshots are committed to the repository. The following describes the actu
 
 Both modes cache results in Redis after the first successful call.
 
-### 📍 Geospatial Validation
+### Geospatial Validation
 
 Every AI-suggested place name goes through `geocodePlace()` — a shared helper that calls `Geoapify /v1/geocode/search?text=...&limit=1`. The function returns `{ lat, lng, formatted }` or `null` if Geoapify cannot resolve the name.
 
@@ -258,7 +203,7 @@ Only places that pass all three filters are added to `verifiedPlaces`. The loop 
 
 **Invariant**: The route optimizer and itinerary scheduler only ever receive coordinates that have been confirmed real by Geoapify and confirmed within radius by Haversine. No AI hallucination can propagate past this layer.
 
-### 🛣️ Real Road Distance Matrix
+### Real Road Distance Matrix
 
 `getORSMatrices(locations)` calls OpenRouteService's Matrix API:
 
@@ -277,19 +222,19 @@ The response produces two N×N matrices:
 
 Both matrices are stored individually per directed pair in Redis before being returned. The TSP solver consumes the distance matrix; the itinerary scheduler consumes the duration matrix.
 
-### 🧠 Exact TSP Optimization
+### Exact TSP Optimization
 
 See [The Algorithm](#the-algorithm--tsp-with-bitmask-dp) for full detail. The C++ binary is invoked as a child process. The distance matrix is serialised and written to stdin. Optimal total distance and ordered node indices are read from stdout.
 
-### ⚡ Redis Caching
+### Redis Caching
 
 See [Redis Architecture](#redis-architecture) for full detail. Four distinct cache namespaces with different TTLs target different cost categories.
 
-### 🗺️ Interactive Map
+### Interactive Map
 
 react-leaflet renders the result. Route geometry comes from a separate ORS Directions call (`/v2/directions/driving-car/geojson`) made *after* TSP optimization, so the polyline exactly follows the optimized stop order. The Directions call uses `geometry_simplify: true` to reduce coordinate density. The geometry is returned from the backend as an array of `{ lat, lng }` objects, ready for Leaflet.
 
-### 📋 Smart Itinerary
+### Smart Itinerary
 
 `scheduleItinerary()` in `itinerary.service.js` is a pure, side-effect-free function. It never reorders stops (the optimized order is treated as fixed) and never estimates travel time independently — it reads only from the ORS `durationMatrix`. The algorithm:
 
@@ -315,7 +260,7 @@ Day rollover resets to `startTime` on `day + 1`. Travel time across a day bounda
 
 ```mermaid
 flowchart TB
-    User(["👤 User\nBrowser"])
+    User(["User\nBrowser"])
 
     subgraph FE["React Frontend (Vite)"]
         direction TB
@@ -340,7 +285,7 @@ flowchart TB
     end
 
     REDIS[("Redis\nUpstash Cloud")]
-    CPP["⚙️ C++ TSP Solver\nsrc/solver/tsp\nchild_process.exec"]
+    CPP["C++ TSP Solver\nsrc/solver/tsp\nchild_process.exec"]
 
     User --> Home
     Home -->|"POST /api/ai-autofill\nPOST /api/ai-plan"| AIA
@@ -381,7 +326,7 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-    Browser["🌐 Browser\nlocalhost:5173"]
+    Browser["Browser\nlocalhost:5173"]
 
     subgraph DC["Docker Compose (local dev)"]
         FEC["frontend container\nnode:20-bullseye\nvite --host\nport 5173"]
@@ -1929,10 +1874,6 @@ No `LICENSE` file is present in this repository. The code is not published under
 
 ---
 
-<div align="center">
-
 Built with **React**, **Node.js**, **C++**, **Redis**, **Gemini API**, and real-world geospatial data.
 
-[🚀 Live Demo](https://loopless.netlify.app/) &nbsp;·&nbsp; [💻 GitHub](https://github.com/georgejosephcodes/Loopless)
-
-</div>
+[Live Demo](https://loopless.netlify.app/) · [GitHub](https://github.com/georgejosephcodes/Loopless)
