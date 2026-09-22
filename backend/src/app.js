@@ -1,3 +1,4 @@
+const os = require('os');
 const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
@@ -14,6 +15,21 @@ const tripsRoutes = require('./routes/trips.routes');
 const sharedRoutes = require('./routes/shared.routes');
 
 const app = express();
+
+// Trust exactly the gateway hop, not an arbitrary chain ('true'
+// would let a client spoof X-Forwarded-For if ever reachable
+// another way).
+app.set('trust proxy', 1);
+
+// Lets the gateway's access log show which replica actually served a
+// request instead of just a container IP that changes on every rebuild.
+app.use((req, res, next) => {
+  res.set('X-Served-By', os.hostname());
+  next();
+});
+
+app.get('/api/health', (req, res) => res.status(200).json({ status: 'ok' }));
+
 // Outside production any localhost port is allowed: Vite moves to 5174+ when 5173 is taken.
 const LOCAL_DEV_ORIGIN = /^http:\/\/(localhost|127\.0\.0\.1):\d+$/;
 app.use(

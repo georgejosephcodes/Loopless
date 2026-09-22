@@ -1,10 +1,43 @@
 services:
-  backend:
+  gateway:
+    build:
+      context: ./gateway
+    container_name: loopless_gateway
+    ports:
+      - "5000:80"
+    depends_on:
+      - backend1
+      - backend2
+      - backend3
+    restart: unless-stopped
+
+  backend1:
     build:
       context: ./backend
-    container_name: loopless_backend
-    ports:
-      - "5000:5000"
+    container_name: loopless_backend1
+    hostname: backend1
+    env_file:
+      - ./backend/.env
+    volumes:
+      - ./backend/src:/app/src
+    restart: unless-stopped
+
+  backend2:
+    build:
+      context: ./backend
+    container_name: loopless_backend2
+    hostname: backend2
+    env_file:
+      - ./backend/.env
+    volumes:
+      - ./backend/src:/app/src
+    restart: unless-stopped
+
+  backend3:
+    build:
+      context: ./backend
+    container_name: loopless_backend3
+    hostname: backend3
     env_file:
       - ./backend/.env
     volumes:
