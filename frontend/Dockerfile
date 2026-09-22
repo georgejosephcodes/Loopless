@@ -7,7 +7,9 @@ RUN npm install
 
 COPY . .
 
-EXPOSE 5173
+EXPOSE 5174
 
-# The --host flag is required for Vite to expose the app outside the container
-CMD ["./node_modules/.bin/vite", "--host"]
+# --host exposes the app outside the container; --port keeps the container's
+# own port in sync with docker-compose.yml's published port (5174), separate
+# from the host-run "npm run dev" default of 5173 so both can run at once.
+CMD ["npm", "run", "dev", "--", "--host", "--port", "5174"]
