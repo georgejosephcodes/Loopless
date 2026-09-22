@@ -508,7 +508,7 @@ sequenceDiagram
         RL-->>FE: 429 {error: "Optimization limit reached. Please wait 15 minutes."}
     end
 
-    Note over API: Validate: locations.length >= 2;\nif mode is oneway, startIdx/endIdx\nmust be distinct valid indices
+    Note over API: Validate: locations.length >= 2.\nIf mode is oneway, startIdx/endIdx\nmust be distinct valid indices
 
     loop For each directed pair (i→j), i≠j
         API->>Cache: GET dist:lat1,lng1:lat2,lng2
