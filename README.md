@@ -508,7 +508,7 @@ sequenceDiagram
         RL-->>FE: 429 {error: "Optimization limit reached. Please wait 15 minutes."}
     end
 
-    Note over API: Validate: locations.length >= 2;\nif mode=="oneway", startIdx/endIdx\nmust be distinct valid indices
+    Note over API: Validate: locations.length >= 2;\nif mode is oneway, startIdx/endIdx\nmust be distinct valid indices
 
     loop For each directed pair (i→j), i≠j
         API->>Cache: GET dist:lat1,lng1:lat2,lng2
@@ -672,7 +672,7 @@ flowchart TD
     PROMPT --> GEM["Gemini generateContent\ngemini-3.6-flash"]
     GEM --> PARSE["Strip markdown fences\nJSON.parse → array"]
     PARSE --> VALID{"every row valid?\nday>=1, place non-empty,\narrival/departure HH:MM|null,\nminutes finite >= 0"}
-    VALID -->|No| ERR["GeminiItineraryError\n→ 503 {error:\"busy\"}"]
+    VALID -->|No| ERR["GeminiItineraryError\n→ 503 error: busy"]
     VALID -->|Yes| STORE["Redis SETEX itinerary:sha1\n86400s (24h)"]
     STORE --> RESP
 
