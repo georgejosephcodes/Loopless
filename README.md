@@ -1819,7 +1819,7 @@ Using `child_process.exec` for C++ communication is significantly simpler than w
 
 ## Performance Characteristics
 
-No latency benchmarks are present in the repository. The following describes cost drivers for each component.
+The following describes cost drivers for each component; see [Benchmark Results](#benchmark-results) below for measured numbers.
 
 | Component | Main Cost Driver | Cache Impact |
 |---|---|---|
@@ -1839,6 +1839,73 @@ No latency benchmarks are present in the repository. The following describes cos
 **Dominant cost on cache miss**: Gemini + N×Geoapify + ORS matrix (3 external API categories in serial/parallel combination).
 
 **Dominant cost on cache hit**: ORS Directions (geometry not cached) + C++ subprocess. Itinerary generation always costs a Gemini call unless the exact stop plan/window/mode was already scheduled within the last 24 hours.
+
+---
+
+## Benchmark Results
+
+Measured with the scripts in `backend/loadtest/` (not part of the `npm test` correctness suite — see [Testing](#testing)). Reproduce with:
+
+```bash
+cd backend
+npm install
+npm run bench            # solver micro-benchmark + HTTP benchmark
+
+# separately, with the Docker stack running (from repo root):
+docker compose up --build
+cd backend && npm run bench:gateway
+```
+
+Numbers below are single-machine, dev-hardware results (Fedora, `npm run bench` output, `autocannon` driving HTTP load) — not a production SLA claim, and will vary by host.
+
+### Solver micro-benchmark
+
+One subprocess spawn per solve (matches `optimize.controller.js` exactly: matrix in over stdin, result out over stdout), round-trip mode, random distance matrices.
+
+| Cities (n) | Iterations | Solves/sec | Mean (ms) | p50 (ms) | p95 (ms) |
+|---|---|---|---|---|---|
+| 4 | 500 | 163.8 | 6.11 | 6.02 | 7.79 |
+| 6 | 500 | 159.1 | 6.29 | 6.25 | 7.89 |
+| 8 | 300 | 157.9 | 6.34 | 6.37 | 7.92 |
+| 10 | 200 | 152.9 | 6.54 | 6.43 | 8.14 |
+| 12 | 100 | 154.8 | 6.46 | 6.35 | 8.72 |
+| 14 | 50 | 108.1 | 9.25 | 9.13 | 11.47 |
+| 16 | 20 | 40.0 | 24.99 | 25.04 | 30.24 |
+
+At n ≤ 12, latency is flat around 6-7ms — dominated by `child_process.exec`'s fork/exec spawn cost, not the DP itself. The exponential O(n²·2ⁿ) cost only becomes visible in wall-clock terms from n=14 onward, roughly 4x slower by n=16 (65,536 masks × 16 positions = 1,048,576 states) than spawn overhead alone would produce.
+
+### HTTP benchmark (single instance)
+
+In-process Express app, in-memory Mongo/Redis, ORS mocked (no real external calls or quota used) — 50 connections, 10s per target unless noted.
+
+| Endpoint | Requests/sec | Latency mean (ms) | p50 (ms) | p95 (ms) | p99 (ms) |
+|---|---|---|---|---|---|
+| `GET /api/health` (baseline, no auth/DB) | 18,700.4 | 2.16 | 2.00 | 4.00 | 4.00 |
+| `POST /api/trips` (authenticated, MongoDB write) | 1,883.7 | 26.06 | 25.00 | 33.00 | 38.00 |
+| `GET /api/trips` (authenticated, MongoDB read) | 121.4 | 422.32 | 418.00 | 545.00 | 973.00 |
+
+`POST /api/optimize` is rate-limited to 10 requests / 15 min in production, so it's measured as latency over 10 sequential requests (ORS mocked) instead of throughput: 273.78ms on the first request (cold Redis/Mongo connections), then 8.83-16.87ms for requests 2-10.
+
+The `GET /api/trips` read is markedly slower than the write path — by the time that target runs, the preceding write benchmark has inserted ~18,800 trips owned by the single benchmark user, and `Trip.find({ owner })` (`controllers/trips.controller.js`) sorts by `updatedAt` with only a single-field index on `owner` (`models/Trip.js`) — no compound `{owner, updatedAt}` index, so Mongo sorts in memory per request. A real account accumulates trips far more slowly, so this is a load-test artifact more than a production concern, but it's a genuine finding: a compound index would be the fix if per-user trip counts ever grow large.
+
+### Gateway round-robin benchmark
+
+`GET /api/health` through the nginx gateway, round-robinned across `backend1`/`backend2`/`backend3`.
+
+| Connections | Requests/sec | Latency mean (ms) | p50 (ms) | p95 (ms) | p99 (ms) |
+|---|---|---|---|---|---|
+| 10 | 3,867.7 | 5.04 | 2.00 | 6.00 | 8.00 |
+| 100 | 3,008.3 | 32.75 | 4.00 | 36.00 | 524.00 |
+
+All responses 2xx at both concurrency levels (38,670/38,670 and 30,079/30,079). Replica distribution, 30 sequential requests read from the `X-Served-By` response header:
+
+| Replica | Requests served |
+|---|---|
+| backend1 | 10 |
+| backend2 | 10 |
+| backend3 | 10 |
+
+Exact 10/10/10 split — nginx's default round-robin confirmed live across all 3 replicas, not assumed from config. Higher concurrency (100 vs. 10 connections) drops average throughput and pushes p99 out to 524ms — the single nginx instance and 3 backend containers on one dev machine become the bottleneck under contention, not the gateway logic itself.
 
 ---
 
@@ -2237,6 +2304,8 @@ npm test
 Full suite: **37/37 passing**, confirmed by a real run (`npm test` in `backend/`), not just a lint/build pass.
 
 The Docker-specific equivalent (confirming the same flows work end to end once traffic passes through the nginx gateway and round-robins across `backend1`/`backend2`/`backend3`) is a manual checklist, not part of this automated suite — see `instructions.txt` in the repo root for the full "Docker-specific" section.
+
+`backend/loadtest/` is a separate performance-benchmarking suite (`npm run bench`, `npm run bench:gateway`) — it measures throughput/latency, not correctness, and is not run in CI or part of the 37/37 count above. See [Benchmark Results](#benchmark-results).
 
 ---
 

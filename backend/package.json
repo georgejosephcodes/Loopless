@@ -10,9 +10,16 @@
     "predev": "npm run build:solver",
     "dev": "nodemon src/server.js",
     "pretest": "npm run build:solver",
-    "test": "node --test"
+    "test": "node --test",
+    "prebench:solver": "npm run build:solver",
+    "bench:solver": "node loadtest/solver-bench.js",
+    "prebench:http": "npm run build:solver",
+    "bench:http": "node loadtest/http-bench.js",
+    "bench:gateway": "node loadtest/gateway-bench.js",
+    "bench": "npm run bench:solver && npm run bench:http"
   },
   "devDependencies": {
+    "autocannon": "^8.0.0",
     "mongodb-memory-server": "^11.3.0",
     "nodemon": "^3.1.10",
     "redis-memory-server": "^0.17.1",
