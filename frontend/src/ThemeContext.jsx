@@ -11,7 +11,7 @@ export const ThemeProvider = ({ children }) => {
 
   useEffect(() => {
     localStorage.setItem('loopless-theme', dark ? 'dark' : 'light');
-    document.body.style.backgroundColor = dark ? '#0f172a' : '#f8fafc';
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
   }, [dark]);
 
   return (

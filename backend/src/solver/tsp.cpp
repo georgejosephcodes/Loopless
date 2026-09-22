@@ -6,13 +6,18 @@
 using namespace std;
 
 const long long INF = 1e15;
-int n, startNode;
+int n, startNode, mode, endNode;
 long long dist[16][16];
 long long memo[1 << 16][16];
 int parent[1 << 16][16];
 
+// mode 0 = round trip (close the loop back to startNode, exact Held-Karp cycle).
+// mode 1 = one-way with a fixed end node (exact Held-Karp path, no return leg).
 long long solve(int mask, int pos) {
-    if (mask == (1 << n) - 1) return dist[pos][startNode]; 
+    if (mask == (1 << n) - 1) {
+        if (mode == 1) return (pos == endNode) ? 0 : INF;
+        return dist[pos][startNode];
+    }
     if (memo[mask][pos] != -1) return memo[mask][pos];
 
     long long ans = INF;
@@ -36,7 +41,7 @@ void printPath(int mask, int pos) {
 }
 
 int main() {
-    if (!(cin >> n >> startNode)) return 0;
+    if (!(cin >> n >> startNode >> mode >> endNode)) return 0;
     for (int i = 0; i < n; i++) {
         for (int j = 0; j < n; j++) cin >> dist[i][j];
     }

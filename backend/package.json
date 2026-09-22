@@ -4,8 +4,14 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-  "start": "node src/server.js",
-  "dev": "nodemon src/server.js"
+    "build:solver": "node scripts/build-solver.js",
+    "prestart": "npm run build:solver",
+    "start": "node src/server.js",
+    "predev": "npm run build:solver",
+    "dev": "nodemon src/server.js"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
   },
   "keywords": [],
   "author": "",
@@ -14,10 +20,14 @@
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
     "axios": "^1.13.2",
+    "bcryptjs": "^3.0.3",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "express-rate-limit": "^8.4.0",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^9.10.1",
     "rate-limit-redis": "^4.3.1",
     "redis": "^5.12.1"
   }

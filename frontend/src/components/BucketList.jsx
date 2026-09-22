@@ -1,110 +1,43 @@
 import React, { useRef } from 'react';
-import { Trash2, Zap, MapPin, GripVertical, Navigation } from 'lucide-react';
+import { Trash2, Zap, GripVertical, Navigation, X } from 'lucide-react';
+import { pinFor } from '../constants/pins';
 
-const PIN_COLORS = ['#10b981', '#3b82f6', '#8b5cf6', '#f59e0b', '#ef4444', '#06b6d4'];
+const MAX_STOPS = 15;
 
-function ListItem({ item, index, dark, onRemove, onDragStart, onDragOver, onDrop, isDragging }) {
-  const pinColor = PIN_COLORS[index % PIN_COLORS.length];
-  const isFirst = index === 0;
-
-  const t = {
-    itemBg: dark ? '#0f172a' : '#f8fafc',
-    itemBorder: dark ? '#334155' : '#eef2f7',
-    itemText: dark ? '#e2e8f0' : '#1e293b',
-    itemSub: dark ? '#475569' : '#94a3b8',
-    gripColor: dark ? '#334155' : '#cbd5e1',
-    trashColor: dark ? '#475569' : '#cbd5e1',
-    trashHover: '#ef4444',
-  };
+function ListItem({ item, index, count, onRemove, onDragStart, onDragOver, onDrop, isDragging, mode }) {
+  const pin = pinFor(index);
+  const roleLabel = mode === 'oneway'
+    ? (index === 0 ? 'Start point' : index === count - 1 ? 'End point' : null)
+    : (index === 0 ? 'Start & return point' : null);
 
   return (
-    <div
+    <li
+      className={`bucket-item${isDragging ? ' is-dragging' : ''}`}
       draggable
       onDragStart={(e) => onDragStart(e, index)}
       onDragOver={(e) => onDragOver(e, index)}
       onDrop={(e) => onDrop(e, index)}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: '10px',
-        padding: '10px 12px',
-        backgroundColor: t.itemBg,
-        borderRadius: '12px',
-        marginBottom: '8px',
-        border: `1px solid ${isDragging ? pinColor : t.itemBorder}`,
-        opacity: isDragging ? 0.45 : 1,
-        transition: 'border-color 0.2s, opacity 0.2s, box-shadow 0.2s',
-        cursor: 'grab',
-        boxShadow: isDragging
-          ? `0 0 0 2px ${pinColor}33`
-          : 'none',
-      }}
+      style={{ '--pin': pin.bg }}
     >
-      <GripVertical
-        size={14}
-        color={t.gripColor}
-        style={{ flexShrink: 0, cursor: 'grab' }}
-      />
-
-      <div style={{
-        width: '24px', height: '24px', flexShrink: 0,
-        backgroundColor: pinColor,
-        borderRadius: '50%',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        color: 'white', fontWeight: 800, fontSize: '10px',
-        boxShadow: `0 2px 6px ${pinColor}55`,
-      }}>
-        {index + 1}
+      <GripVertical size={15} className="bucket-grip" aria-hidden="true" />
+      <span className="bucket-pin" style={{ background: pin.bg, color: pin.fg }}>{index + 1}</span>
+      <div className="bucket-name">
+        <span className="truncate">{item.name}</span>
+        {roleLabel && <small>{roleLabel}</small>}
       </div>
-
-      {/* Name */}
-      <div style={{ flex: 1, overflow: 'hidden' }}>
-        <div style={{
-          fontWeight: 600, fontSize: '13px',
-          color: t.itemText,
-          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-        }}>
-          {item.name}
-        </div>
-        {isFirst && (
-          <div style={{
-            fontSize: '10px', fontWeight: 700,
-            color: '#10b981', marginTop: '1px',
-            letterSpacing: '0.04em',
-          }}>
-            START POINT
-          </div>
-        )}
-      </div>
-
-      <button
-        onClick={() => onRemove(item.id)}
-        title="Remove location"
-        style={{
-          background: 'none', border: 'none', cursor: 'pointer',
-          padding: '4px', borderRadius: '6px', flexShrink: 0,
-          color: t.trashColor, display: 'flex', alignItems: 'center',
-          transition: 'color 0.15s, background-color 0.15s',
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.color = '#ef4444';
-          e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.1)';
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.color = t.trashColor;
-          e.currentTarget.style.backgroundColor = 'transparent';
-        }}
-      >
-        <Trash2 size={15} />
+      <button type="button" className="icon-btn bucket-remove" onClick={() => onRemove(item.id)} aria-label={`Remove ${item.name}`} title="Remove">
+        <X size={15} />
       </button>
-    </div>
+    </li>
   );
 }
 
-// NOTE: Added 'onClearAll' to the props
-const BucketList = ({ list, onRemove, onClearAll, onOptimize, onReorder, dark, loading }) => {
+const BucketList = ({
+  list, onRemove, onClearAll, onOptimize, onReorder, loading,
+  mode = 'roundtrip', setMode,
+}) => {
   const count = list.length;
-  const isFull = count >= 15;
+  const isFull = count >= MAX_STOPS;
   const canOptimize = count >= 2 && !loading;
 
   const dragIndex = useRef(null);
@@ -122,11 +55,7 @@ const BucketList = ({ list, onRemove, onClearAll, onOptimize, onReorder, dark, l
 
   const handleDrop = (e, index) => {
     e.preventDefault();
-    if (
-      dragIndex.current === null ||
-      dragIndex.current === index ||
-      !onReorder
-    ) return;
+    if (dragIndex.current === null || dragIndex.current === index || !onReorder) return;
 
     const reordered = [...list];
     const [moved] = reordered.splice(dragIndex.current, 1);
@@ -136,230 +65,90 @@ const BucketList = ({ list, onRemove, onClearAll, onOptimize, onReorder, dark, l
     dragOverIndex.current = null;
   };
 
-  const t = {
-    headerColor: dark ? '#f1f5f9' : '#1e293b',
-    countColor: isFull ? '#ef4444' : (dark ? '#64748b' : '#94a3b8'),
-    progressTrack: dark ? '#1e293b' : '#f1f5f9',
-    progressFill: isFull ? '#ef4444' : '#3b82f6',
-    divider: dark ? '#1e293b' : '#f1f5f9',
-    emptyIconBg: dark ? '#1e293b' : '#f1f5f9',
-    emptyIconColor: dark ? '#334155' : '#cbd5e1',
-    emptyTextColor: dark ? '#475569' : '#94a3b8',
-    hintColor: dark ? '#334155' : '#e2e8f0',
-    hintText: dark ? '#475569' : '#94a3b8',
-    btnDisabledBg: dark ? '#1e293b' : '#f1f5f9',
-    btnDisabledColor: dark ? '#334155' : '#cbd5e1',
-    btnActiveBg: 'linear-gradient(135deg, #10b981, #059669)',
-    btnActiveShadow: '0 4px 14px rgba(16,185,129,0.35)',
-    headerTrashColor: dark ? '#64748b' : '#94a3b8',
-  };
-
   return (
-    <div style={{
-      display: 'flex', flexDirection: 'column',
-      height: '100%', padding: '20px',
-    }}>
-
-      <div style={{ marginBottom: '16px', flexShrink: 0 }}>
-        <div style={{
-          display: 'flex', justifyContent: 'space-between',
-          alignItems: 'center', marginBottom: '10px',
-        }}>
-          <h3 style={{
-            margin: 0, fontSize: '16px', fontWeight: 800,
-            color: t.headerColor, letterSpacing: '-0.02em',
-          }}>
-            Route Stops
-          </h3>
-          
-          {/* New Container for Clear All and Count Badge */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+    <div className="bucket">
+      <div className="bucket-head">
+        <div className="bucket-head-row">
+          <h2>Your trip</h2>
+          <div className="bucket-head-actions">
             {count > 0 && (
-              <button
-                onClick={onClearAll}
-                title="Clear all locations"
-                style={{
-                  background: 'none', border: 'none', cursor: 'pointer',
-                  padding: '4px', borderRadius: '6px',
-                  color: t.headerTrashColor, display: 'flex', alignItems: 'center',
-                  transition: 'color 0.15s, background-color 0.15s',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.color = '#ef4444';
-                  e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.1)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.color = t.headerTrashColor;
-                  e.currentTarget.style.backgroundColor = 'transparent';
-                }}
-              >
+              <button type="button" className="icon-btn" style={{ width: 32, height: 32 }} onClick={onClearAll} title="Clear all stops" aria-label="Clear all stops">
                 <Trash2 size={16} />
               </button>
             )}
-            
-            <span style={{
-              fontSize: '12px', fontWeight: 700,
-              color: t.countColor,
-              backgroundColor: isFull
-                ? 'rgba(239,68,68,0.1)'
-                : (dark ? '#1e293b' : '#f1f5f9'),
-              padding: '3px 9px', borderRadius: '20px',
-              transition: 'color 0.3s',
-            }}>
-              {count} / 15
+            <span className={`badge num ${isFull ? '' : 'badge-accent'}`} style={isFull ? { background: 'var(--danger-soft)', color: 'var(--danger)' } : undefined}>
+              {count} / {MAX_STOPS}
             </span>
           </div>
         </div>
-
-        <div style={{
-          width: '100%', height: '4px',
-          backgroundColor: t.progressTrack,
-          borderRadius: '2px', overflow: 'hidden',
-        }}>
-          <div style={{
-            width: `${(count / 15) * 100}%`,
-            height: '100%',
-            backgroundColor: t.progressFill,
-            borderRadius: '2px',
-            transition: 'width 0.35s ease, background-color 0.3s',
-          }} />
+        <div className="bucket-progress" role="progressbar" aria-valuemin={0} aria-valuemax={MAX_STOPS} aria-valuenow={count}>
+          <div style={{ width: `${(count / MAX_STOPS) * 100}%`, background: isFull ? 'var(--danger)' : 'var(--accent)' }} />
         </div>
-
-        {count > 0 && (
-          <p style={{
-            margin: '10px 0 0', fontSize: '11px',
-            fontWeight: 600, color: '#10b981',
-            display: 'flex', alignItems: 'center', gap: '5px',
-          }}>
-            <span style={{
-              display: 'inline-block', width: '8px', height: '8px',
-              borderRadius: '50%', backgroundColor: '#10b981',
-              flexShrink: 0,
-            }} />
-            Stop #1 is the start &amp; return point
-          </p>
-        )}
       </div>
 
-      <div style={{
-        height: '1px', backgroundColor: t.divider,
-        marginBottom: '14px', flexShrink: 0,
-      }} />
+      {count >= 2 && setMode && (
+        <div className="bucket-mode" style={{ padding: '10px 16px 0', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div className="option-list" style={{ display: 'flex', gap: 8 }}>
+            <button
+              type="button"
+              className={`chip${mode === 'roundtrip' ? ' is-active' : ''}`}
+              onClick={() => setMode('roundtrip')}
+            >
+              Round trip
+            </button>
+            <button
+              type="button"
+              className={`chip${mode === 'oneway' ? ' is-active' : ''}`}
+              onClick={() => setMode('oneway')}
+            >
+              One-way
+            </button>
+          </div>
+        </div>
+      )}
 
-      <div style={{ flex: 1, overflowY: 'auto', marginBottom: '14px' }}>
+      <div className="bucket-scroll">
         {count === 0 ? (
-          /* Empty state */
-          <div style={{
-            display: 'flex', flexDirection: 'column',
-            alignItems: 'center', justifyContent: 'center',
-            height: '100%', textAlign: 'center', padding: '20px',
-          }}>
-            <div style={{
-              width: '52px', height: '52px', borderRadius: '16px',
-              backgroundColor: t.emptyIconBg,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              marginBottom: '14px',
-            }}>
-              <Navigation size={24} color={t.emptyIconColor} />
-            </div>
-            <p style={{
-              margin: '0 0 6px', fontSize: '14px',
-              fontWeight: 700, color: t.emptyTextColor,
-            }}>
-              No stops yet
-            </p>
-            <p style={{
-              margin: 0, fontSize: '12px',
-              color: t.emptyTextColor, opacity: 0.7, lineHeight: 1.5,
-            }}>
-              Search for places using the bar above and add at least 2 to optimize a route.
-            </p>
+          <div className="empty-state">
+            <div className="empty-icon"><Navigation size={24} /></div>
+            <h3>No stops yet</h3>
+            <p>Search for a place or let AI suggest a plan. Add at least 2 stops to optimize.</p>
           </div>
         ) : (
-          <>
+          <ul className="bucket-list">
             {list.map((item, index) => (
               <ListItem
                 key={item.id}
                 item={item}
                 index={index}
-                dark={dark}
+                count={count}
                 onRemove={onRemove}
                 onDragStart={handleDragStart}
                 onDragOver={handleDragOver}
                 onDrop={handleDrop}
                 isDragging={dragIndex.current === index}
+                mode={mode}
               />
             ))}
-
-            {/* Drag hint — only show when 2+ items */}
-            {count >= 2 && (
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: '6px',
-                padding: '8px 10px', marginTop: '2px',
-                borderRadius: '8px',
-                backgroundColor: dark ? 'transparent' : 'transparent',
-              }}>
-                <GripVertical size={12} color={t.hintColor} />
-                <span style={{ fontSize: '11px', color: t.hintText }}>
-                  Drag to reorder stops
-                </span>
-              </div>
-            )}
-          </>
+          </ul>
+        )}
+        {count >= 2 && (
+          <p className="bucket-hint">
+            <GripVertical size={12} />
+            {mode === 'oneway'
+              ? ' Drag to reorder. The first stop is the start, the last is the end.'
+              : ' Drag to reorder. The first stop is where the loop starts and ends.'}
+          </p>
         )}
       </div>
 
-      <button
-        onClick={onOptimize}
-        disabled={!canOptimize}
-        style={{
-          width: '100%', padding: '15px',
-          borderRadius: '14px', border: 'none',
-          background: canOptimize ? t.btnActiveBg : t.btnDisabledBg,
-          color: canOptimize ? 'white' : t.btnDisabledColor,
-          fontWeight: 800, fontSize: '14px',
-          cursor: canOptimize ? 'pointer' : 'not-allowed',
-          display: 'flex', justifyContent: 'center',
-          alignItems: 'center', gap: '8px',
-          boxShadow: canOptimize ? t.btnActiveShadow : 'none',
-          transition: 'background 0.3s, box-shadow 0.3s, transform 0.15s',
-          flexShrink: 0,
-          letterSpacing: '-0.01em',
-        }}
-        onMouseEnter={(e) => {
-          if (canOptimize) e.currentTarget.style.transform = 'translateY(-1px)';
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.transform = 'translateY(0)';
-        }}
-        onMouseDown={(e) => {
-          if (canOptimize) e.currentTarget.style.transform = 'translateY(1px)';
-        }}
-        onMouseUp={(e) => {
-          if (canOptimize) e.currentTarget.style.transform = 'translateY(-1px)';
-        }}
-      >
-        <Zap size={16} strokeWidth={2.5} />
-        {loading ? 'Optimizing…' : 'Optimize Route'}
-      </button>
-
-      {/* Min-stops hint below button */}
-      {count < 2 && count > 0 && (
-        <p style={{
-          margin: '8px 0 0', fontSize: '11px',
-          color: t.hintText, textAlign: 'center',
-        }}>
-          Add {2 - count} more stop{2 - count > 1 ? 's' : ''} to enable
-        </p>
-      )}
-      {count === 0 && (
-        <p style={{
-          margin: '8px 0 0', fontSize: '11px',
-          color: t.hintText, textAlign: 'center',
-        }}>
-          Add at least 2 stops to optimize
-        </p>
-      )}
+      <div className="bucket-foot">
+        <button type="button" className="btn btn-primary btn-lg btn-block" onClick={onOptimize} disabled={!canOptimize}>
+          {loading ? <span className="spinner" /> : <Zap size={18} />}
+          {loading ? 'Optimizing…' : 'Optimize route'}
+        </button>
+        {count < 2 && <p className="bucket-foot-hint">Add {2 - count} more {2 - count === 1 ? 'stop' : 'stops'} to optimize</p>}
+      </div>
     </div>
   );
 };

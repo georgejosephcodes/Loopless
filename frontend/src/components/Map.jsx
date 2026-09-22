@@ -1,9 +1,9 @@
 import React from 'react';
-import { MapContainer, TileLayer, Marker, Polyline, useMap, CircleMarker, Circle } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Polyline, useMap, CircleMarker, Circle, AttributionControl } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { MapPin } from 'lucide-react';
-import 'leaflet/dist/leaflet.css';
+import { pinFor } from '../constants/pins';
+import './Map.css';
 
 delete L.Icon.Default.prototype._getIconUrl;
 
@@ -16,101 +16,42 @@ L.Icon.Default.mergeOptions({
 const CONTAINER_STYLE = { width: '100%', height: '100%' };
 const DEFAULT_CENTER = { lat: 20.5937, lng: 78.9629 };
 
-const PIN_COLORS = ['#10b981', '#3b82f6', '#8b5cf6', '#f59e0b', '#ef4444', '#06b6d4'];
+// Geoapify raster tiles: a light and a dark style.
+const GEOAPIFY_KEY = import.meta.env.VITE_GEOAPIFY_API_KEY;
+const RETINA = L.Browser.retina ? '@2x' : '';
+const tileUrl = (style) =>
+  `https://maps.geoapify.com/v1/tile/${style}/{z}/{x}/{y}${RETINA}.png?apiKey=${GEOAPIFY_KEY}`;
+const TILES = {
+  light: tileUrl('osm-bright'),
+  dark: tileUrl('dark-matter'),
+};
+const ATTRIBUTION = 'Powered by <a href="https://www.geoapify.com/">Geoapify</a> | &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 
-function CustomPin({ index, isSelected }) {
-  const color = PIN_COLORS[index % PIN_COLORS.length];
-  const size = isSelected ? 46 : 32;
+const ROUTE_COLOR = { light: '#f59e0b', dark: '#fbbf24' };
+const USER_COLOR = '#0ea5e9';
 
-  return (
-    <div style={{
-      position: 'relative',
-      transform: 'translate(-50%, -100%)',
-      zIndex: isSelected ? 100 : 1,
-    }}>
-      {isSelected && (
-        <div style={{
-          position: 'absolute',
-          top: '30%', left: '50%',
-          transform: 'translate(-50%, -50%)',
-          width: '60px', height: '60px',
-          borderRadius: '50%',
-          backgroundColor: `${color}35`,
-          animation: 'mapPulse 1.4s ease-out infinite',
-          pointerEvents: 'none',
-          zIndex: -1,
-        }} />
-      )}
-      <svg
-        width={size}
-        height={Math.round(size * 50 / 38)}
-        viewBox="0 0 38 50"
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
-        style={{
-          filter: isSelected
-            ? `drop-shadow(0 6px 14px ${color}88)`
-            : `drop-shadow(0 3px 6px ${color}44)`,
-          transition: 'width 0.2s, height 0.2s, filter 0.2s',
-          display: 'block',
-        }}
-      >
-        <path
-          d="M19 0C8.507 0 0 8.507 0 19c0 14.25 19 31 19 31S38 33.25 38 19C38 8.507 29.493 0 19 0z"
-          fill={color}
-        />
-        <circle cx="19" cy="19" r="8" fill="white" fillOpacity="0.9" />
-        <text
-          x="19" y="23"
-          textAnchor="middle"
-          fontSize="10" fontWeight="800"
-          fill={color}
-          fontFamily="system-ui, sans-serif"
-        >
-          {index + 1}
-        </text>
-      </svg>
-      <style>{`
-        @keyframes mapPulse {
-          0%   { transform: translate(-50%, -50%) scale(0.6); opacity: 1; }
-          100% { transform: translate(-50%, -50%) scale(2.6); opacity: 0; }
-        }
-      `}</style>
-    </div>
-  );
+function createPinIcon(index, isSelected) {
+  const { bg, fg } = pinFor(index);
+  const size = isSelected ? 46 : 34;
+  const height = Math.round((size * 50) / 38);
+
+  return L.divIcon({
+    className: 'map-pin',
+    html: `
+      <div class="map-pin-inner">
+        ${isSelected ? `<span class="map-pin-halo" style="background:${bg}40"></span>` : ''}
+        <svg width="${size}" height="${height}" viewBox="0 0 38 50" fill="none" xmlns="http://www.w3.org/2000/svg"
+          style="filter:drop-shadow(0 ${isSelected ? 6 : 3}px ${isSelected ? 12 : 6}px ${bg}${isSelected ? '99' : '55'});display:block;">
+          <path d="M19 0C8.507 0 0 8.507 0 19c0 14.25 19 31 19 31S38 33.25 38 19C38 8.507 29.493 0 19 0z" fill="${bg}" stroke="rgba(255,255,255,0.9)" stroke-width="1.5"/>
+          <circle cx="19" cy="19" r="10" fill="${fg === '#ffffff' ? 'rgba(0,0,0,0.18)' : 'rgba(255,255,255,0.35)'}"/>
+          <text x="19" y="23" text-anchor="middle" font-size="12" font-weight="800" fill="${fg}" font-family="'Plus Jakarta Sans', system-ui, sans-serif">${index + 1}</text>
+        </svg>
+      </div>
+    `,
+    iconSize: [38, 50],
+    iconAnchor: [19, 50],
+  });
 }
-
-function LocationDot() {
-  return (
-    <div style={{ transform: 'translate(-50%, -50%)', position: 'relative', zIndex: 200 }}>
-      <div style={{
-        position: 'absolute', top: '50%', left: '50%',
-        transform: 'translate(-50%, -50%)',
-        width: '48px', height: '48px', borderRadius: '50%',
-        backgroundColor: 'rgba(66,133,244,0.15)', pointerEvents: 'none',
-      }} />
-      <div style={{
-        position: 'absolute', top: '50%', left: '50%',
-        transform: 'translate(-50%, -50%)',
-        width: '32px', height: '32px', borderRadius: '50%',
-        backgroundColor: 'rgba(66,133,244,0.2)',
-        animation: 'locPulse 2.2s ease-out infinite', pointerEvents: 'none',
-      }} />
-      <div style={{
-        position: 'relative', width: '16px', height: '16px',
-        borderRadius: '50%', backgroundColor: '#4285F4',
-        border: '2.5px solid white', boxShadow: '0 1px 6px rgba(66,133,244,0.8)',
-      }} />
-      <style>{`
-        @keyframes locPulse {
-          0%   { transform: translate(-50%,-50%) scale(0.4); opacity: 1; }
-          100% { transform: translate(-50%,-50%) scale(2.2); opacity: 0; }
-        }
-      `}</style>
-    </div>
-  );
-}
-
 
 function RecenterMap({ center, zoom }) {
   const map = useMap();
@@ -129,33 +70,13 @@ function RadiusMask({ userLocation, radiusKm }) {
 
   return (
     <>
-      {/* Dark global overlay */}
-      <div
-        style={{
-          position: 'absolute',
-          inset: 0,
-          backgroundColor: 'rgba(15,23,42,0.42)',
-          pointerEvents: 'none',
-          zIndex: 399,
-        }}
-      />
+      {/* Dim overlay */}
+      <div className="map-radius-dim" />
 
       {/* Transparent circular cutout */}
       <div
-        style={{
-          position: 'absolute',
-          top: '50%',
-          left: '50%',
-          width: `${radiusKm * 55}px`,
-          height: `${radiusKm * 55}px`,
-          transform: 'translate(-50%, -50%)',
-          borderRadius: '50%',
-          boxShadow: '0 0 0 9999px rgba(15,23,42,0.01)',
-          background: 'transparent',
-          pointerEvents: 'none',
-          zIndex: 400,
-          mixBlendMode: 'destination-out',
-        }}
+        className="map-radius-cut"
+        style={{ width: `${radiusKm * 55}px`, height: `${radiusKm * 55}px` }}
       />
     </>
   );
@@ -170,170 +91,95 @@ const Map = ({
   userLocation  = null,
   radiusKm      = 0,
 }) => {
-  const isLoaded = true;
-  const loadError = false;
-
-
-
-
-
-
-  if (loadError) {
-    return (
-      <div style={{
-        height: '100%', display: 'flex', alignItems: 'center',
-        justifyContent: 'center', color: '#ef4444', fontSize: '14px',
-        fontWeight: 600, backgroundColor: dark ? '#0f172a' : '#f8fafc',
-      }}>
-        ⚠️ Failed to load Google Maps. Check your API key.
-      </div>
-    );
-  }
-
-  if (!isLoaded) {
-    return (
-      <div style={{
-        height: '100%', display: 'flex', alignItems: 'center',
-        justifyContent: 'center', backgroundColor: dark ? '#0f172a' : '#f8fafc',
-      }}>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
-          <div style={{ width: '36px', height: '36px', borderRadius: '50%', border: '3px solid #3b82f6', borderTopColor: 'transparent', animation: 'spin 0.8s linear infinite' }} />
-          <span style={{ fontSize: '13px', color: dark ? '#64748b' : '#94a3b8', fontWeight: 500 }}>Loading map…</span>
-        </div>
-        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-      </div>
-    );
-  }
-
+  const theme = dark ? 'dark' : 'light';
   const displayLocations = routePath ?? locations;
 
-  function createCustomPinIcon(index, isSelected) {
-  const color = PIN_COLORS[index % PIN_COLORS.length];
-  const size = isSelected ? 46 : 32;
+  const routeCoordinates =
+    roadPath.length > 1
+      ? roadPath.map(point => [point.lat, point.lng])
+      : [];
 
-  return L.divIcon({
-    className: '',
-    html: `
-      <div style="position:relative;transform:translate(-50%,-100%);">
-        <svg
-          width="${size}"
-          height="${Math.round(size * 50 / 38)}"
-          viewBox="0 0 38 50"
-          fill="none"
-          xmlns="http://www.w3.org/2000/svg"
-          style="filter:${
-            isSelected
-              ? `drop-shadow(0 6px 14px ${color}88)`
-              : `drop-shadow(0 3px 6px ${color}44)`
-          };display:block;"
-        >
-          <path
-            d="M19 0C8.507 0 0 8.507 0 19c0 14.25 19 31 19 31S38 33.25 38 19C38 8.507 29.493 0 19 0z"
-            fill="${color}"
-          />
-          <circle cx="19" cy="19" r="8" fill="white" fill-opacity="0.9" />
-          <text
-            x="19"
-            y="23"
-            text-anchor="middle"
-            font-size="10"
-            font-weight="800"
-            fill="${color}"
-            font-family="system-ui, sans-serif"
-          >
-            ${index + 1}
-          </text>
-        </svg>
-      </div>
-    `,
-    iconSize: [38, 50],
-    iconAnchor: [19, 50],
-  });
-}
-const routeCoordinates =
-  roadPath.length > 1
-    ? roadPath.map(point => [point.lat, point.lng])
-    : [];
-
-return (
-  <>
-    <MapContainer
-      style={CONTAINER_STYLE}
-      center={[DEFAULT_CENTER.lat, DEFAULT_CENTER.lng]}
-      zoom={5}
-    >
-      <TileLayer
-        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-      />
-
-      <RecenterMap
-center={
-  radiusKm > 0 && userLocation
-    ? [userLocation.lat, userLocation.lng]
-    : displayLocations.length > 0
-      ? [displayLocations[displayLocations.length - 1].lat, displayLocations[displayLocations.length - 1].lng]
-      : userLocation
+  const lastLocation = displayLocations[displayLocations.length - 1];
+  // Memoized on primitive lat/lng values, not on lastLocation/userLocation
+  // object identity, so a re-render that doesn't move the trip (e.g. a
+  // dark-mode toggle) keeps the same array reference and does not re-fire
+  // RecenterMap's effect, which would otherwise snap the view back.
+  const center = React.useMemo(
+    () =>
+      radiusKm > 0 && userLocation
         ? [userLocation.lat, userLocation.lng]
-        : [DEFAULT_CENTER.lat, DEFAULT_CENTER.lng]
-}
-        zoom={userLocation || displayLocations.length > 0 ? 13 : 5}
-      />
+        : lastLocation
+          ? [lastLocation.lat, lastLocation.lng]
+          : userLocation
+            ? [userLocation.lat, userLocation.lng]
+            : [DEFAULT_CENTER.lat, DEFAULT_CENTER.lng],
+    [radiusKm, userLocation?.lat, userLocation?.lng, lastLocation?.lat, lastLocation?.lng]
+  );
 
-      {/* Location blue dot */}
-      {userLocation && (
-        <CircleMarker
-          center={[userLocation.lat, userLocation.lng]}
-          radius={10}
-          pathOptions={{
-            color: '#ffffff',
-            weight: 3,
-            fillColor: '#4285F4',
-            fillOpacity: 1,
-          }}
-        />
-      )}
+  return (
+    <>
+      <MapContainer
+        style={CONTAINER_STYLE}
+        center={[DEFAULT_CENTER.lat, DEFAULT_CENTER.lng]}
+        zoom={5}
+        attributionControl={false}
+      >
+        {/* Bottom-left so the floating trip panel never covers the credit */}
+        <AttributionControl position="bottomleft" />
+        <TileLayer key={theme} url={TILES[theme]} attribution={ATTRIBUTION} maxZoom={20} />
 
-      {/* Radius circle */}
-      {userLocation && radiusKm > 0 && (
-        <Circle
-          center={[userLocation.lat, userLocation.lng]}
-          radius={radiusKm * 1000}
-          pathOptions={{
-            color: '#3b82f6',
-            weight: 2,
-            fillColor: '#3b82f6',
-            fillOpacity: 0.08,
-          }}
+        <RecenterMap
+          center={center}
+          zoom={userLocation || displayLocations.length > 0 ? 13 : 5}
         />
-      )}
-      {/* Route path */}
-      {routeCoordinates.length > 1 && (
-        <Polyline
-          positions={routeCoordinates}
-          pathOptions={{
-            color: '#3b82f6',
-            weight: 4,
-            opacity: 0.85,
-          }}
-        />
-      )}
-      {/* Route stop pins */}
-      {displayLocations.map((loc, index) => (
-        <Marker
-          key={loc.id ?? `${loc.lat}-${loc.lng}-${index}`}
-          position={[loc.lat, loc.lng]}
-          icon={createCustomPinIcon(index, selectedIndex === index)}
-        />
-      ))}
-    </MapContainer>
 
-    {/* Outside radius dim mask */}
-    <RadiusMask
-      userLocation={userLocation}
-      radiusKm={radiusKm}
-    />
-  </>
-);
+        {/* Location dot */}
+        {userLocation && (
+          <CircleMarker
+            center={[userLocation.lat, userLocation.lng]}
+            radius={10}
+            pathOptions={{ color: '#ffffff', weight: 3, fillColor: USER_COLOR, fillOpacity: 1 }}
+          />
+        )}
+
+        {/* Radius circle */}
+        {userLocation && radiusKm > 0 && (
+          <Circle
+            center={[userLocation.lat, userLocation.lng]}
+            radius={radiusKm * 1000}
+            pathOptions={{ color: USER_COLOR, weight: 2, fillColor: USER_COLOR, fillOpacity: 0.08 }}
+          />
+        )}
+
+        {/* Route path: soft under-stroke + crisp line */}
+        {routeCoordinates.length > 1 && (
+          <>
+            <Polyline
+              positions={routeCoordinates}
+              pathOptions={{ color: ROUTE_COLOR[theme], weight: 10, opacity: 0.22, lineCap: 'round', lineJoin: 'round' }}
+            />
+            <Polyline
+              positions={routeCoordinates}
+              pathOptions={{ color: ROUTE_COLOR[theme], weight: 4, opacity: 0.95, lineCap: 'round', lineJoin: 'round' }}
+            />
+          </>
+        )}
+
+        {/* Route stop pins */}
+        {displayLocations.map((loc, index) => (
+          <Marker
+            key={loc.id ?? `${loc.lat}-${loc.lng}-${index}`}
+            position={[loc.lat, loc.lng]}
+            icon={createPinIcon(index, selectedIndex === index)}
+            zIndexOffset={selectedIndex === index ? 1000 : 0}
+          />
+        ))}
+      </MapContainer>
+
+      {/* Outside radius dim mask */}
+      <RadiusMask userLocation={userLocation} radiusKm={radiusKm} />
+    </>
+  );
 };
 
 export default Map;

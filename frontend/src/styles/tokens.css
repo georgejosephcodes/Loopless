@@ -1,0 +1,89 @@
+/* Design tokens. Light is the default; dark is switched by data-theme on <html>. */
+:root {
+  --font: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  --bg: #faf8f5;
+  --surface: #ffffff;
+  --raised: #f4f1ec;
+  --border: #e7e2da;
+  --border-strong: #d6d0c6;
+  --text: #1c1917;
+  --muted: #78716c;
+  --faint: #a8a29e;
+
+  --accent: #f59e0b;
+  --accent-hover: #d97706;
+  --accent-soft: rgba(245, 158, 11, 0.14);
+  --accent-fg: #1a1204;
+
+  --success: #059669;
+  --success-soft: rgba(5, 150, 105, 0.12);
+  --ai: #7c3aed;
+  --ai-soft: rgba(124, 58, 237, 0.1);
+  --ai-fg: #ffffff;
+  --danger: #dc2626;
+  --danger-soft: rgba(220, 38, 38, 0.1);
+  --info: #0284c7;
+
+  --shadow-sm: 0 1px 2px rgba(28, 25, 23, 0.06);
+  --shadow-md: 0 4px 16px rgba(28, 25, 23, 0.08), 0 1px 3px rgba(28, 25, 23, 0.05);
+  --shadow-lg: 0 20px 48px rgba(28, 25, 23, 0.16), 0 4px 12px rgba(28, 25, 23, 0.06);
+  --glass: rgba(255, 255, 255, 0.82);
+  --scrim: rgba(28, 25, 23, 0.45);
+  --scrollbar: #d6d0c6;
+  --scrollbar-hover: #b8b1a6;
+  --focus-ring: 0 0 0 3px rgba(245, 158, 11, 0.35);
+
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 24px;
+  --r-full: 999px;
+
+  --appbar-h: 60px;
+  --panel-w: 380px;
+
+  --z-map-ui: 500;
+  --z-appbar: 1200;
+  --z-dropdown: 1400;
+  --z-modal: 2000;
+  --z-toast: 3000;
+
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  --bg: #0e0e10;
+  --surface: #17171a;
+  --raised: #1f1f24;
+  --border: #2a2a30;
+  --border-strong: #3a3a42;
+  --text: #f4f4f5;
+  --muted: #a1a1aa;
+  --faint: #71717a;
+
+  --accent: #f59e0b;
+  --accent-hover: #fbbf24;
+  --accent-soft: rgba(245, 158, 11, 0.14);
+  --accent-fg: #1a1204;
+
+  --success: #34d399;
+  --success-soft: rgba(52, 211, 153, 0.14);
+  --ai: #a78bfa;
+  --ai-soft: rgba(167, 139, 250, 0.16);
+  --ai-fg: #16102b;
+  --danger: #f87171;
+  --danger-soft: rgba(248, 113, 113, 0.14);
+  --info: #38bdf8;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.02);
+  --shadow-lg: 0 24px 56px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  --glass: rgba(23, 23, 26, 0.82);
+  --scrim: rgba(0, 0, 0, 0.65);
+  --scrollbar: #3a3a42;
+  --scrollbar-hover: #52525b;
+  --focus-ring: 0 0 0 3px rgba(245, 158, 11, 0.4);
+
+  color-scheme: dark;
+}

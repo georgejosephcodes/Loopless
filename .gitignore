@@ -10,13 +10,19 @@ frontend/dist/
 backend/node_modules/
 
 # ─── C++ SOLVER ───
-backend/solver/tsp
-backend/solver/*.o
-backend/solver/*.exe
-backend/solver/*.out
+backend/src/solver/tsp
+backend/src/solver/*.o
+backend/src/solver/*.exe
+backend/src/solver/*.out
 
 # ─── SYSTEM & LOGS ───
 *.log
 npm-debug.log*
 .DS_Store
 dist/
+
+# ─── CLAUDE CODE ───
+.claude/
+
+# ─── DOCS / SCRATCH ───
+instructions.txt
