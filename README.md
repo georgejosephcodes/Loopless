@@ -4,7 +4,7 @@
 
 *Collapse destination discovery, geospatial validation, road-network routing, and exact TSP optimization into a single end-to-end pipeline.*
 
-[Live Demo](https://loopless.netlify.app/) — [GitHub](https://github.com/georgejosephcodes/Loopless)
+[GitHub](https://github.com/georgejosephcodes/Loopless)
 
 ---
 
@@ -377,27 +377,85 @@ flowchart TB
 
 ## Local Development Architecture
 
-> Docker Compose is provided for reproducible local development and testing. It is **not** the production hosting mechanism for the live application.
+The project runs entirely through Docker Compose — this is the actual local architecture, not a throwaway dev convenience layered on top of something else.
+
+This is a **5-container topology**: an nginx API gateway, three interchangeable backend replicas behind it, and the frontend. This is deliberately more than "one backend container" — it exists to prove out and exercise the same round-robin/replica-safety design the app would need at real scale, without adding an ops burden (single nginx instance, no Redis pub/sub adapter, no sticky sessions needed because every piece of shared state — rate limits, cache, refresh tokens — is already Redis/Mongo-backed, not process-local).
 
 ```mermaid
 flowchart LR
-    Browser["Browser\nlocalhost:5173"]
+    Browser["Browser\nlocalhost:5174"]
 
     subgraph DC["Docker Compose (local dev)"]
-        FEC["frontend container\nnode:20-bullseye\nvite --host\nport 5173"]
-        BEC["backend container\nnode:20-bullseye\nnode src/server.js\nport 5000"]
-        BIN["tsp binary\ng++ -O3\ncompiled at image build"]
+        FEC["frontend container\nnode:20-bullseye\nvite --host --port 5174"]
+
+        subgraph GW["gateway container — nginx:alpine\nport 5000 → 80"]
+            NG["upstream loopless_backend\nround robin\nmax_fails=3 fail_timeout=10s"]
+        end
+
+        BE1["backend1\nnode:20-bullseye · port 5000\n(no published host port)"]
+        BE2["backend2\nnode:20-bullseye · port 5000\n(no published host port)"]
+        BE3["backend3\nnode:20-bullseye · port 5000\n(no published host port)"]
+
+        BIN1["tsp binary\ng++ -O3, recompiled\nfresh every container start"]
+        BIN2["tsp binary\ng++ -O3, recompiled\nfresh every container start"]
+        BIN3["tsp binary\ng++ -O3, recompiled\nfresh every container start"]
     end
 
-    Upstash["Upstash Redis\nCloud (TLS)"]
-    APIs["External APIs\nGemini · Geoapify · ORS"]
+    EXT["Upstash Redis (TLS) · MongoDB Atlas ·\nExternal APIs — Gemini · Geoapify · ORS"]
 
-    Browser -->|"HTTP"| FEC
-    FEC -->|"API calls\nVITE_API_URL"| BEC
-    BEC -->|"child_process.exec"| BIN
-    BEC -->|"REDIS_URL"| Upstash
-    BEC -->|"HTTPS"| APIs
+    Browser -->|"HTTP (app)"| FEC
+    Browser -->|"/api/* (VITE_API_URL)"| GW
+    NG -->|"round robin"| BE1
+    NG -->|"round robin"| BE2
+    NG -->|"round robin"| BE3
+    BE1 --> BIN1
+    BE2 --> BIN2
+    BE3 --> BIN3
+    BE1 -->|"REDIS_URL / MONGODB_URI / HTTPS"| EXT
+    BE2 -->|"REDIS_URL / MONGODB_URI / HTTPS"| EXT
+    BE3 -->|"REDIS_URL / MONGODB_URI / HTTPS"| EXT
 ```
+
+**Why a gateway + replicas, not one backend container:**
+
+- **nginx, not a custom Node gateway or Traefik** — a config-only reverse proxy; default `upstream` behavior is already round robin, no extra directive needed.
+- **Only `/api/*` is fronted.** The frontend container still publishes directly to the host on `5174`, unchanged. Vite's dev-server HMR relies on a WebSocket that's fiddly to proxy correctly (`Upgrade` headers, `hmr.clientPort`) — the backend is the piece that actually benefits from load balancing, so the frontend is left alone.
+- **Named replicas (`backend1`/`backend2`/`backend3`), not `docker compose up --scale backend=3`.** Open-source nginx resolves a hostname in an `upstream { server ...; }` line once at startup and pins to that single IP — it does not fan a multi-A-record DNS name out into multiple peers. Explicit named services in `docker-compose.yml`, each listed individually in `gateway/nginx.conf`'s `upstream` block, avoid that entirely.
+- **Replicas publish no host port** — only the gateway does. They're reachable from nginx purely over the Compose default network, by service name, on their internal port `5000`.
+- **The gateway reuses host port `5000`** (previously the single backend's published port). Since replicas no longer publish to the host, `5000` is free, and `VITE_API_URL=http://localhost:5000` needs no value change — it now resolves to the gateway instead of a backend directly.
+- **No CORS change was needed.** The gateway only reverse-proxies `/api/*` and never terminates the frontend's own origin, so the browser's `Origin` header on API calls is still `http://localhost:5174`, exactly as before — `app.js`'s existing `CLIENT_ORIGINS`/`LOCAL_DEV_ORIGIN` allowlist already covers it.
+
+**Round robin is verified, not assumed.** `backend/src/app.js` sets a response header `X-Served-By: ${os.hostname()}` on every request — each replica's `hostname:` in `docker-compose.yml` is fixed (`backend1`/`backend2`/`backend3`), unlike Docker's internal IPs which change on every rebuild. `gateway/nginx.conf` logs an `upstream_log` access-log format that prints `served_by=$upstream_http_x_served_by upstream=$upstream_addr`, so `docker compose logs -f gateway` while curling `/api/health` in a loop shows `served_by=` cycling across all three replicas — direct proof of distribution, not an inference from config alone.
+
+**Gateway config (verified from `gateway/nginx.conf`):**
+
+```nginx
+upstream loopless_backend {
+    server backend1:5000 max_fails=3 fail_timeout=10s;
+    server backend2:5000 max_fails=3 fail_timeout=10s;
+    server backend3:5000 max_fails=3 fail_timeout=10s;
+    # default (no directive) = round robin
+}
+
+server {
+    listen 80;
+
+    location /gateway-health {
+        return 200 "ok\n";
+    }
+
+    location /api/ {
+        proxy_pass http://loopless_backend;
+        proxy_http_version 1.1;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_next_upstream error timeout http_502 http_503 http_504;
+    }
+}
+```
+
+No path rewrite: nginx passes the original `/api/...` URI straight through, matching Express's `app.use('/api/...', ...)` mounts in `backend/src/app.js`. `proxy_next_upstream` plus the upstream's `max_fails`/`fail_timeout` gives passive failover — stopping one replica mid-traffic (`docker compose stop backend2`) keeps requests succeeding, routed to the remaining two.
 
 **Dockerfile (backend)** — key steps verified from source:
 
@@ -414,46 +472,16 @@ COPY . .
 RUN g++ -O3 -o src/solver/tsp src/solver/tsp.cpp  # compile solver at build time
 
 EXPOSE 5000
-CMD ["node", "src/server.js"]
+CMD ["sh", "-c", "rm -f src/solver/tsp && npm run dev"]
 ```
 
-The Docker image compiles the C++ solver at image-build time, providing a reproducible local development environment. The application does not compile the solver on each request — the pre-built binary is invoked directly via `child_process.exec`.
+The image compiles the C++ solver once at build time, but `CMD` **deletes and recompiles it again on every container start**. Reason: `docker-compose.yml` bind-mounts `./backend/src` into each backend container for live reload — if a developer also ran the backend on the host (a non-Docker `npm start`), that mount can shadow the image's own compiled binary with a host-built one. A binary built on the host's glibc (e.g. Fedora) fails to `exec` inside this image's Debian bullseye glibc, even though `scripts/build-solver.js`'s mtime check would otherwise think it's already up to date. Forcing a fresh in-container compile on every start guarantees the running binary always matches that container's own glibc. All three replicas do this independently on their own container filesystem — no shared state, no race.
 
-The frontend container runs `vite --host` (dev-server mode) and mounts `src/` and `public/` as volumes for live reload in development.
+The frontend container runs `vite --host --port 5174` (dev-server mode, `5174` not the non-Docker default `5173` so a Docker instance and a host `npm run dev` instance can run side by side without a port clash) and mounts `src/`, `public/`, `index.html`, and `vite.config.js` as volumes for live reload.
 
-Redis is not self-hosted in the Compose file. `REDIS_URL` points to Upstash Cloud Redis over TLS. The application gracefully logs a `CRITICAL` error on connection failure but does not terminate.
+Redis and MongoDB are not self-hosted in the Compose file — `REDIS_URL` points to Upstash Cloud Redis over TLS, `MONGODB_URI` to MongoDB Atlas, same as non-Docker. Each of `backend1`/`backend2`/`backend3` reads `backend/.env` via `env_file:`, so `MONGODB_URI`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `CLIENT_ORIGIN`, and `SEED_DEMO_USER` reach every replica identically — required for stateless-JWT auth to work consistently across replicas. This setup is verified end to end by a real `docker compose up --build` run (see [Testing](#testing) below for what "verified" covers), not just a lint/build pass.
 
-> **Stale**: this Compose setup and both Dockerfiles predate the auth/MongoDB additions. They don't pass through `MONGODB_URI`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `CLIENT_ORIGIN`, or `SEED_DEMO_USER` — those still need to be supplied manually (e.g. via a mounted `.env`) for the backend to start correctly under Docker. **[Option A — running without Docker](#option-a--run-without-docker-recommended)** below already accounts for all current env vars and is the recommended path.
-
----
-
-## Production Deployment
-
-**Frontend — Netlify**
-
-The React frontend is deployed to [Netlify](https://www.netlify.com/) and served from the Netlify CDN at [loopless.netlify.app](https://loopless.netlify.app/). The `public/_redirects` file configures SPA routing so all paths resolve to `index.html`:
-
-```
-/*    /index.html    200
-```
-
-This ensures React Router handles client-side navigation without Netlify returning 404s on direct URL access.
-
-**Backend — hosting provider not determinable from repository**
-
-The backend deployment target for the live application is not specified in any configuration file committed to this repository (no `railway.toml`, `render.yaml`, `fly.toml`, `Procfile`, or equivalent). The `VITE_API_URL` environment variable in the frontend `.env` points to the deployed backend URL at runtime.
-
-> The frontend (Netlify) and backend (separately hosted) being on different origins means the refresh-token cookie is cross-site (`sameSite: 'none'`, `secure`). This requires `CLIENT_ORIGIN`/CORS to be configured correctly on the backend and hasn't been validated end-to-end against a live production deployment — see [Limitations](#limitations).
-
-**External services (both environments)**
-
-| Service | Role | Environment |
-|---|---|---|
-| MongoDB Atlas | Users, refresh tokens, saved/shared trips | Both |
-| Upstash Redis | Cache + rate-limit store | Both |
-| Gemini API | AI destination discovery + itinerary scheduling | Both |
-| Geoapify | Geocoding + autocomplete | Both |
-| OpenRouteService | Road matrix + geometry | Both |
+**Known accepted gap:** demo-user seeding (`server.js` → `services/demoUser.service.js`) runs independently per replica on cold start. `User.email`'s unique index prevents duplicate rows, but on a completely fresh database with `SEED_DEMO_USER=true`, if all three replicas race to insert simultaneously, the losing replica(s) hit an uncaught `E11000` and crash on startup. `restart: unless-stopped` retries and the second attempt no-ops since the user now exists — a noisy one-time crash-and-restart on first-ever cold start only, not a recurring problem.
 
 ---
 
@@ -1179,7 +1207,7 @@ All limiters use `express-rate-limit` v8 with a `rate-limit-redis` (`RedisStore`
 
 `POST /api/ai-autofill`, `POST /api/ai-plan`, and `POST /api/itinerary` have **no rate limiter** applied.
 
-> **Known gap**: `app.set('trust proxy', ...)` is not configured anywhere in the app. Every IP-keyed limiter above (`limiter`, `sharedLimiter`, and the IP-fallback path of `authLimiter`) reads `req.ip` directly, which reflects the immediate socket peer rather than a forwarded client address if the app runs behind a reverse proxy/load balancer in production — this needs to be set before those limits are meaningful in that deployment shape.
+> `app.set('trust proxy', 1)` is configured in `app.js`, trusting exactly the nginx gateway hop. `req.ip` on every IP-keyed limiter above (`limiter`, `sharedLimiter`, and the IP-fallback path of `authLimiter`) resolves to the real client address behind the gateway, not the gateway's own container IP.
 
 ---
 
@@ -1785,7 +1813,7 @@ Using `child_process.exec` for C++ communication is significantly simpler than w
 | CORS | Explicit origin allowlist (`CLIENT_ORIGINS` env var) + `credentials: true`; `localhost`/`127.0.0.1` origins additionally allowed outside production | Required since the refresh token travels as a cookie; wildcard `*` is explicitly rejected |
 | External API errors | All external calls wrapped in try/catch | Errors return structured JSON, not raw stack traces |
 
-**Known gaps, not yet addressed**: `app.set('trust proxy', ...)` is not configured, so the IP-keyed rate limiters see the proxy's address rather than the real client behind a reverse proxy in production. Share links never expire — only manual revoke removes access. Refresh-token rotation does not revoke *all* other outstanding sessions for a user on reuse detection, only the single consumed token. The seeded demo account (`demo@loopless.test`) should be disabled (`SEED_DEMO_USER=false`) before a real public launch.
+**Known gaps, not yet addressed**: Share links never expire — only manual revoke removes access. Refresh-token rotation does not revoke *all* other outstanding sessions for a user on reuse detection, only the single consumed token. The seeded demo account (`demo@loopless.test`) should be disabled (`SEED_DEMO_USER=false`) before a real public launch.
 
 ---
 
@@ -1859,15 +1887,6 @@ Road network changes (new roads, closures, speed limit updates) within the 30-da
 **Geoapify client key**
 `VITE_GEOAPIFY_API_KEY` is visible in the browser bundle. This is a standard pattern for geocoding/autocomplete APIs where the service is read-only and key rotation is the primary abuse mitigation.
 
-**Not yet verified by an automated run**
-No part of this codebase has been run through `npm run lint`/`build`/`test` or exercised in a browser in an assistant session — all verification so far has been manual code reading. There are no automated tests at all.
-
-**Production cross-site cookie risk**
-The refresh-token cookie is `sameSite: 'none'` in production, which requires `secure` and a properly configured origin allowlist to work correctly across the Netlify frontend and a separately hosted backend. This hasn't been validated end-to-end against a live production deployment.
-
-**`trust proxy` not configured**
-`req.ip` reflects the immediate socket peer, not a forwarded client address, behind any reverse proxy/load balancer. This makes the IP-keyed rate limiters (`/api/optimize`, `/api/shared/:token`, and the IP-fallback path of the auth limiter) less effective in that deployment shape.
-
 **Refresh-token rotation doesn't revoke all sessions**
 Detecting reuse of an already-consumed refresh token invalidates only that token, not every other active session for the same user. A stolen-and-replayed-later token from a different device isn't proactively cut off beyond its own natural expiry.
 
@@ -1880,14 +1899,21 @@ Stops are added via search/AI discovery only; there's no "click a point on the m
 **Unused dependency**
 `@react-google-maps/api` remains in `frontend/package.json` but is unused — the map is `react-leaflet` with Geoapify tiles.
 
-**Stale Docker files**
-The `Dockerfile`s and `docker-compose.yml` predate the auth/MongoDB additions and are missing the newer environment variables (`MONGODB_URI`, JWT secrets, `CLIENT_ORIGIN`, `SEED_DEMO_USER`) unless manually supplied.
-
 ---
 
 ## Future Architecture
 
 These are potential improvements tied to current limitations. None are implemented. (An earlier version of this section listed "add user authentication and a database layer for saved/shared routes" as future work — that's now built; see [Accounts & Authentication](#accounts--authentication) and [Saved Trips & Sharing](#saved-trips--sharing).)
+
+### Group Trip Chat with Live Itinerary Sync
+
+Trip owner starts a group chat, generates an invite link, anyone with the link can join and chat, owner can remove members and revoke the link, and owner add/remove of itinerary places broadcasts live to everyone in the chat — not just a static read-only share.
+
+No chat, realtime layer, or membership concept exists today. The design reuses `Trip`'s existing anonymous `shareToken` pattern's shape (token generation, sparse unique index, rate-limited public route) but adds real membership plus a Socket.IO layer on top — a genuinely new subsystem, not a small patch.
+
+Hardest parts, in order: (1) making member-removal actually revoke a still-valid guest JWT — needs a DB status re-check on every request/socket event plus a forced socket disconnect, not just token expiry; (2) the Socket.IO auth handshake supporting two token types (real user vs. guest); (3) concurrent itinerary edits — v1 accepts last-write-wins, explicitly not solved.
+
+Build order: realtime walking skeleton (connect, auth handshake, join room, echo one message) → chat history + invite link join flow → member list + admin removal (with forced disconnect verified against a still-unexpired token) → itinerary granular add/remove endpoints + live broadcast → frontend reconnect/resync polish.
 
 ### Larger Trip Sizes
 
@@ -1997,11 +2023,23 @@ Loopless/
 │   │       ├── time.js                    # timeStringToMinutes(), minutesToTimeString()
 │   │       └── tripSnapshot.js            # sanitizeSnapshot(): whitelist/bound-check a Trip snapshot before saving
 │   │
+│   ├── test/
+│   │   ├── auth.test.js                   # register, login, /me, logout, health, rate-limit (email-keyed) — 13/13
+│   │   ├── trips.test.js                  # create/list/get/update/delete, ownership checks, MAX_LOCATIONS cap
+│   │   ├── share.test.js                  # enable share, non-owner denied, public read, unknown token, revoke
+│   │   ├── itinerary.test.js              # Gemini mocked (direct reassignment), valid/busy-fallback/cache-hit paths
+│   │   ├── optimize.test.js               # ORS mocked pre-require; roundtrip/oneway via real compiled solver binary
+│   │   └── helpers/testEnv.js             # installs the ORS mock before app.js is required (avoids stale destructure)
+│   │
 │   ├── scripts/build-solver.js            # compiles tsp.cpp with g++ -O3 if missing/outdated (used by npm start/dev)
 │   ├── .env.example                       # Template for required env vars
-│   ├── Dockerfile                         # node:20-bullseye + g++ + compile tsp.cpp -O3
-│   ├── package.json                       # scripts: start (node), dev (nodemon)
+│   ├── Dockerfile                         # node:20-bullseye + g++ + compile tsp.cpp -O3; recompiles solver on every container start
+│   ├── package.json                       # scripts: start (node), dev (nodemon), test (node --test, pretest builds solver)
 │   └── .gitignore
+│
+├── gateway/
+│   ├── Dockerfile                         # nginx:alpine + copy nginx.conf
+│   └── nginx.conf                         # upstream loopless_backend (round robin) → backend1/2/3:5000; /gateway-health; /api/ reverse proxy
 │
 ├── frontend/
 │   ├── src/
@@ -2050,7 +2088,7 @@ Loopless/
 │   │       └── api.js                     # axios wrapper: bearer-token interceptor, single-flight refresh+retry on 401
 │   │
 │   ├── public/
-│   │   ├── _redirects                     # Netlify SPA redirect: /* → /index.html
+│   │   ├── _redirects                     # SPA fallback redirect: /* → /index.html
 │   │   └── pic.svg                        # Static SVG asset
 │   │
 │   ├── .env.example                       # VITE_API_URL, VITE_GEOAPIFY_API_KEY, VITE_SHOW_DEMO
@@ -2058,7 +2096,7 @@ Loopless/
 │   ├── Dockerfile                         # node:20-bullseye + vite --host
 │   └── package.json                       # dev/build/preview scripts (still lists unused @react-google-maps/api)
 │
-├── docker-compose.yml                     # backend:5000 + frontend:5173; .env file mounting (stale — missing newer vars)
+├── docker-compose.yml                     # gateway:5000→80 (nginx, round-robins backend1/2/3) + backend1/2/3 (no published port) + frontend:5174; env_file per service
 └── README.md
 ```
 
@@ -2119,14 +2157,14 @@ Open http://localhost:5173 — the login page loads first. In local development 
 
 ### Option B — Docker Compose (optional, local testing only)
 
-The Dockerfile handles `g++` installation and solver compilation automatically.
+Each Dockerfile handles its own setup automatically — the backend image installs `g++` and compiles the solver; the gateway image is just `nginx:alpine` plus a config file. `docker compose up --build` starts **five containers**: `gateway`, `backend1`, `backend2`, `backend3`, `frontend`.
 
 ```bash
 git clone https://github.com/georgejosephcodes/Loopless.git
 cd Loopless
 ```
 
-Create `backend/.env`:
+Create `backend/.env` — read by all three backend replicas via `env_file:`, so it only needs to exist once:
 
 ```env
 PORT=5000
@@ -2137,7 +2175,7 @@ REDIS_URL=rediss://your_upstash_url
 MONGODB_URI=your_mongodb_connection_string
 JWT_ACCESS_SECRET=long_random_string
 JWT_REFRESH_SECRET=another_long_random_string
-CLIENT_ORIGIN=http://localhost:5173
+CLIENT_ORIGIN=http://localhost:5174
 ```
 
 Create `frontend/.env`:
@@ -2151,10 +2189,54 @@ VITE_GEOAPIFY_API_KEY=your_geoapify_api_key
 docker compose up --build
 ```
 
-| Service | URL |
+| Service | URL | Notes |
+|---|---|---|
+| Frontend | http://localhost:5174 | Vite dev server, **not** 5173 — see [Local Development Architecture](#local-development-architecture) |
+| API Gateway | http://localhost:5000 | nginx, round-robins `/api/*` across `backend1`/`backend2`/`backend3` — not a single backend container |
+
+Smoke-test the gateway once containers are up:
+
+```bash
+curl http://localhost:5000/gateway-health
+# ok
+```
+
+To watch round robin in action, tail the gateway's access log while hitting the API in a loop:
+
+```bash
+docker compose logs -f gateway
+# in another terminal:
+for i in $(seq 1 10); do curl -s http://localhost:5000/api/health > /dev/null; done
+```
+
+Each line should show `served_by=` cycling across `backend1`, `backend2`, and `backend3`.
+
+Both the frontend and every backend replica live-reload on source edits — backend via `nodemon` (each replica independently, since `./backend/src` is bind-mounted into all three), frontend via Vite. Editing `backend/src/*`, `frontend/src/*`, `frontend/index.html`, or `frontend/vite.config.js` does not require a rebuild.
+
+---
+
+## Testing
+
+Backend tests run against an ephemeral in-memory MongoDB and Redis — no external database, no Upstash connection, no real network calls to Gemini/Geoapify/ORS. Stack: Node's built-in `node:test` runner (no Jest/Mocha), `supertest` for HTTP assertions against the Express app, `mongodb-memory-server`, and `redis-memory-server`.
+
+```bash
+cd backend
+npm test
+```
+
+`npm test` runs `pretest` first, which is `npm run build:solver` — the same compile-if-missing-or-outdated step used by `npm start`/`npm run dev` — so the C++ TSP solver is always available before the suite runs.
+
+| Spec file | Covers |
 |---|---|
-| Frontend | http://localhost:5173 |
-| Backend | http://localhost:5000 |
+| `test/auth.test.js` | Register, login, `GET /me`, logout, health check; both rate-limit behaviors — repeated wrong logins for the *same* email block regardless of source IP, different emails from the same IP don't share a bucket. **13/13 passing** |
+| `test/trips.test.js` | Create/list/get/update/delete, ownership checks (a trip can't be read/modified by a non-owner), `MAX_LOCATIONS` cap enforcement |
+| `test/share.test.js` | Enable share (mints token), non-owner denied, public read with no auth, unknown token returns 404, revoke stops the link working |
+| `test/itinerary.test.js` | Gemini call mocked by directly reassigning `geminiModel.generateContent` (no mocking library) — valid response, `503 busy` fallback on failure/unparseable output, a cache hit skips a second Gemini call |
+| `test/optimize.test.js` | ORS lookup mocked via a stable wrapper installed in `test/helpers/testEnv.js` **before** `app.js` is required — `ors.service`'s exports are destructured at require time in `optimize.controller.js`, so mutating the module later wouldn't reach it. Round trip vs one-way exercised through the **real compiled solver binary**; matrix-retrieval-failure path |
+
+Full suite: **37/37 passing**, confirmed by a real run (`npm test` in `backend/`), not just a lint/build pass.
+
+The Docker-specific equivalent (confirming the same flows work end to end once traffic passes through the nginx gateway and round-robins across `backend1`/`backend2`/`backend3`) is a manual checklist, not part of this automated suite — see `instructions.txt` in the repo root for the full "Docker-specific" section.
 
 ---
 
@@ -2181,7 +2263,7 @@ Generate the two JWT secrets with `node -e "console.log(require('crypto').random
 
 | Variable | Required | Description |
 |---|---|---|
-| `VITE_API_URL` | ✅ | Backend base URL — `http://localhost:5000` for local dev; set to the deployed backend URL in hosted environments |
+| `VITE_API_URL` | ✅ | Backend base URL — `http://localhost:5000` without Docker, resolves to the nginx gateway on the same port under Docker Compose |
 | `VITE_GEOAPIFY_API_KEY` | ✅ | Geoapify key for client-side address autocomplete in SearchBar and map tiles |
 | `VITE_SHOW_DEMO` | ❌ | Set `true` to show the demo-account card on the login screen in a production build (shown by default in dev) |
 
@@ -2213,10 +2295,10 @@ git checkout -b feature/your-feature-name
 
 ## License
 
-No `LICENSE` file is present in this repository. The code is not published under an open-source license. Contact the author before reusing or redistributing any part of this codebase.
+MIT — see [`LICENSE`](LICENSE).
 
 ---
 
 Built with **React**, **Node.js**, **C++**, **MongoDB**, **Redis**, **JWT**, **Gemini API**, and real-world geospatial data.
 
-[Live Demo](https://loopless.netlify.app/) · [GitHub](https://github.com/georgejosephcodes/Loopless)
+[GitHub](https://github.com/georgejosephcodes/Loopless)
